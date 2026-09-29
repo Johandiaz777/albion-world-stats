@@ -74,6 +74,8 @@ function writeShards(dir, region, windows, rivals) {
     const rec = { n: name };
     for (const [key, w] of Object.entries(windows)) if (w.guilds[name]) rec[key] = w.guilds[name];
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
+    const id = Object.values(windows).find((w) => w.ids?.[name])?.ids[name];
+    if (id) rec.id = id;
     gShards[shardOf(name, GUILD_SHARDS)][name.toLowerCase()] = rec;
   }
   const builtAt = new Date().toISOString();
@@ -88,7 +90,7 @@ async function hourly(region) {
   const today = day();
   const r = await dayRollup(region, today, stats);
   if (!r) throw new Error(`sin archivos de hoy (${today})`);
-  const out = writeShards(path.join(here, 'today'), region, { d: r }, { rd: rivalsByGuild(r.rivals, 5) });
+  const out = writeShards(path.join(here, 'today'), region, { d: r }, { rd: rivalsByGuild(r.rivals, 5, r.ids) });
   writeJson(path.join(here, 'today', region, 'weapons.json'), { v: 1, region, date: today, builtAt: new Date().toISOString(), d: r.weapons });
   return { date: today, ...out, downloadedMB: Math.round(stats.bytes / 1e5) / 10, retries: stats.retries, badLines: r.badLines };
 }
@@ -121,7 +123,7 @@ async function daily(region) {
     a: mergeRollups(load([FIRST_DAY, yesterday])),
   };
   if (seasonStart) windows.s = mergeRollups(load([seasonStart, yesterday]));
-  const rivals = { rm: rivalsByGuild(windows.m.rivals, 10), ra: rivalsByGuild(windows.a.rivals, 10) };
+  const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids) };
   const out = writeShards(path.join(here, 'index'), region, windows, rivals);
   writeJson(path.join(here, 'index', region, 'weapons.json'), {
     v: 1,

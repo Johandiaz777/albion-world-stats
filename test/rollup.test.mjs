@@ -35,8 +35,8 @@ test('peleas: victoria/derrota por kills contra muertes y rivales por par', () =
   assert.equal(r.guilds.Lobos[G.WINS], 1);
   assert.equal(r.guilds.Osos[G.LOSSES], 1);
   const rivals = rivalsByGuild(r.rivals);
-  assert.deepEqual(rivals.Lobos[0], ['Osos', 1, 1, 0]);
-  assert.deepEqual(rivals.Osos[0], ['Lobos', 1, 0, 1]);
+  assert.deepEqual(rivals.Lobos[0], ['Osos', 1, 1, 0, '']);
+  assert.deepEqual(rivals.Osos[0], ['Lobos', 1, 0, 1, '']);
 });
 
 test('equipo: arma del asesino suma kill, arma de la víctima suma muerte', () => {
