@@ -16,7 +16,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildDayRollup, mergeRollups, P, rivalsByGuild, shardOf } from './lib/rollup.mjs';
+import { buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
@@ -61,6 +61,8 @@ function writeShards(dir, region, windows, rivals) {
       if (hasActivity(v)) {
         rec[key] = nums(v);
         if (!guild && v[P.GUILD]) guild = v[P.GUILD];
+        const x = compactExtras(w.px?.[name]);
+        if (x) rec["x" + key] = x;
       }
     }
     if (guild) rec.g = guild;
@@ -72,7 +74,11 @@ function writeShards(dir, region, windows, rivals) {
   for (const w of Object.values(windows)) for (const n of Object.keys(w.guilds)) gNames.add(n);
   for (const name of gNames) {
     const rec = { n: name };
-    for (const [key, w] of Object.entries(windows)) if (w.guilds[name]) rec[key] = w.guilds[name];
+    for (const [key, w] of Object.entries(windows)) {
+      if (w.guilds[name]) rec[key] = w.guilds[name];
+      const members = topMembers(w.gm?.[name]);
+      if (members.length) rec["x" + key] = members;
+    }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
     const id = Object.values(windows).find((w) => w.ids?.[name])?.ids[name];
     if (id) rec.id = id;
@@ -100,7 +106,7 @@ async function daily(region) {
   const yesterday = day(-1);
   const rollupPath = (d) => path.join(here, 'rollups', region, `${d}.json.gz`);
   // 1) Días cerrados que falten (primero los más recientes: lo que más se mira).
-  const missing = dateList(FIRST_DAY, yesterday).filter((d) => readJson(rollupPath(d), null) === null).reverse();
+  const missing = dateList(FIRST_DAY, yesterday).filter((d) => (readJson(rollupPath(d), null)?.v ?? 0) < ROLLUP_VERSION).reverse();
   let built = 0;
   const empty = [];
   for (const d of missing.slice(0, maxDays)) {
@@ -110,7 +116,9 @@ async function daily(region) {
       continue;
     }
     const { badLines, ...data } = r;
-    writeJson(rollupPath(d), { v: 1, region, date: d, ...data, badLines });
+    // Resúmenes v1 (sin extras) se rehacen de a poco, los más recientes primero; mientras tanto la
+    // ventana usa el v1 que ya había (cuenta igual kills y muertes, solo le faltan los extras).
+    writeJson(rollupPath(d), { region, date: d, ...data, v: ROLLUP_VERSION, badLines });
     built += 1;
   }
   // 2) Ventanas (hasta ayer; la app suma el `today/` para que terminen hoy).

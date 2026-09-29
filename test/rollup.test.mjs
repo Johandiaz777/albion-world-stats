@@ -73,3 +73,33 @@ test('sources: antes del 01/10 Europa y América se leen de la carpeta cruzada',
   assert.match(oct[0], /albion-data-europe-2026-10\/main\/kills\/2026-10-02/);
   assert.match(oct[1], /data\/kills\/europe\/2026-10-02/);
 });
+
+test('v2: solo / grupo / ZvZ, healer, arma y build completas, botín y miembros del gremio', async () => {
+  const { buildDayRollup, compactExtras, topMembers } = await import('../lib/rollup.mjs');
+  const line = (o) => JSON.stringify(o);
+  const zvzParts = Array.from({ length: 22 }, (_, i) => ({ name: `z${i}`, guildName: 'Lobos', damageDone: 10, healingDone: 0 }));
+  const killsText = [
+    line({ eventId: 1, battleId: 1, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 100, participantsCount: 1, participants: [{ name: 'Ana', guildName: 'Lobos', damageDone: 900, healingDone: 0 }] }),
+    line({ eventId: 2, battleId: 2, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Caro', victimGuild: 'Osos', totalFame: 50, participantsCount: 2, participants: [{ name: 'Ana', guildName: 'Lobos', damageDone: 500 }, { name: 'Dani', guildName: 'Lobos', damageDone: 0, healingDone: 800 }] }),
+    line({ eventId: 3, battleId: 3, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Eva', victimGuild: 'Osos', totalFame: 10, participantsCount: 22, participants: zvzParts }),
+  ].join('\n');
+  const equipmentText = [
+    line({ e: 1, k: ['T8_2H_CLAYMORE@3', '', 'T8_HEAD_PLATE_SET1@2', 'T8_ARMOR_PLATE_SET1', 'T8_SHOES_PLATE_SET1', 'CAPE', 'HORSE'], v: ['2H_BOW'], ve: 1000, vi: 500 }),
+    line({ e: 2, k: ['T8_2H_CLAYMORE@3', '', 'T8_HEAD_PLATE_SET1@2', 'T8_ARMOR_PLATE_SET1', 'T8_SHOES_PLATE_SET1', 'CAPE', 'HORSE'], v: [''] }),
+  ].join('\n');
+  const r = buildDayRollup({ killsText, battlesText: '', equipmentText });
+  assert.equal(r.v, 2);
+  assert.deepEqual(r.px.Ana.m, [1, 1, 1, 0, 0, 0]);
+  assert.deepEqual(r.px.Beto.m, [0, 0, 0, 1, 0, 0]);
+  assert.deepEqual(r.px.Dani.h, [1, 1]);
+  assert.deepEqual(r.px.Ana.l, [1500, 0]);
+  assert.deepEqual(r.px.Beto.l, [0, 1500]);
+  assert.equal(r.px.Ana.w['T8_2H_CLAYMORE@3'], 2);
+  assert.equal(r.px.Beto.w['2H_BOW'], undefined); // línea vieja (solo base): no cuenta
+  assert.equal(r.weapons['2H_CLAYMORE'][0], 2); // armas por base, como siempre
+  const x = compactExtras(r.px.Ana);
+  assert.deepEqual(x.w, [['T8_2H_CLAYMORE@3', 2]]);
+  assert.equal(x.b[0][0], 'T8_2H_CLAYMORE@3||T8_HEAD_PLATE_SET1@2|T8_ARMOR_PLATE_SET1|T8_SHOES_PLATE_SET1');
+  assert.deepEqual(topMembers(r.gm.Lobos, 2)[0], ['Ana', 3, 0, 0, 160]);
+  assert.equal(r.gm.Lobos.Dani[2], 1);
+});
