@@ -48,7 +48,8 @@ async function dayRollup(region, date, stats) {
 const nums = (v) => (v ? v.slice(0, 7) : null);
 const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
 
-function writeShards(dir, region, windows, rivals) {
+/** `series`: { desde: fecha, guilds: { gremio: [[kills, muertes, famaKill] por día] } } (opcional). */
+function writeShards(dir, region, windows, rivals, series) {
   // Jugadores
   const pShards = Array.from({ length: PLAYER_SHARDS }, () => ({}));
   const names = new Set();
@@ -80,6 +81,7 @@ function writeShards(dir, region, windows, rivals) {
       if (members.length) rec["x" + key] = members;
     }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
+    if (series?.guilds[name]) rec.sm = series.guilds[name];
     const id = Object.values(windows).find((w) => w.ids?.[name])?.ids[name];
     if (id) rec.id = id;
     gShards[shardOf(name, GUILD_SHARDS)][name.toLowerCase()] = rec;
@@ -87,7 +89,7 @@ function writeShards(dir, region, windows, rivals) {
   const builtAt = new Date().toISOString();
   let bytes = 0;
   pShards.forEach((players, i) => (bytes += writeJson(path.join(dir, region, 'p', `${i}.json`), { v: 1, region, builtAt, players })));
-  gShards.forEach((guilds, i) => (bytes += writeJson(path.join(dir, region, 'g', `${i}.json`), { v: 1, region, builtAt, guilds })));
+  gShards.forEach((guilds, i) => (bytes += writeJson(path.join(dir, region, 'g', `${i}.json`), { v: 1, region, builtAt, ...(series ? { smFrom: series.from } : {}), guilds })));
   return { players: names.size, guilds: gNames.size, bytes };
 }
 
@@ -132,7 +134,18 @@ async function daily(region) {
   };
   if (seasonStart) windows.s = mergeRollups(load([seasonStart, yesterday]));
   const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids) };
-  const out = writeShards(path.join(here, 'index'), region, windows, rivals);
+  // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
+  // el teléfono no baja 30 archivos de peleas de ~6 MB para dibujarla.
+  const seriesDays = dateList(day(-29), yesterday);
+  const dayRollups = seriesDays.map((d) => readJson(rollupPath(d), null));
+  const seriesGuilds = {};
+  for (const name of Object.keys(windows.m.guilds)) {
+    seriesGuilds[name] = dayRollups.map((r) => {
+      const g = r?.guilds?.[name];
+      return g ? [g[0], g[1], g[2]] : [0, 0, 0];
+    });
+  }
+  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds });
   writeJson(path.join(here, 'index', region, 'weapons.json'), {
     v: 1,
     region,
