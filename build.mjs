@@ -31,7 +31,20 @@ const mode = args[0] === 'daily' ? 'daily' : 'hourly';
 const argValue = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const regions = argValue('--region') ? [argValue('--region')] : REGIONS;
 const maxDays = Number(argValue('--max-days') ?? MAX_BACKFILL_DAYS);
-const config = readJson(path.join(here, 'config.json'), {});
+const fileConfig = readJson(path.join(here, 'config.json'), {});
+/** Temporada cargada por el admin en el panel (config/leaderboardSeason, lectura pública); si no hay
+ * red o no existe, la de config.json. Así Rankings y los perfiles usan la misma temporada. */
+async function panelSeasonStart() {
+  try {
+    const res = await fetch('https://firestore.googleapis.com/v1/projects/albion-world/databases/(default)/documents/config/leaderboardSeason', { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const start = (await res.json())?.fields?.seasonStart?.stringValue;
+    return typeof start === 'string' && /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : null;
+  } catch {
+    return null;
+  }
+}
+const config = { ...fileConfig, seasonStart: (await panelSeasonStart()) ?? fileConfig.seasonStart ?? null };
 const day = (offset = 0) => new Date(Date.now() + offset * 86400e3).toISOString().slice(0, 10);
 
 async function dayRollup(region, date, stats) {
