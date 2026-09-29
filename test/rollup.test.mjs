@@ -61,3 +61,15 @@ test('parte (shard) estable, sin distinguir mayúsculas', () => {
   // Valor fijo: la app usa la misma función y debe coincidir.
   assert.equal(shardOf('yakishiba', 256), shardOf('YakiShiba', 256));
 });
+
+test('sources: antes del 01/10 Europa y América se leen de la carpeta cruzada', async () => {
+  const { candidateUrls, legacyFolder } = await import('../lib/sources.mjs');
+  assert.equal(legacyFolder('europe', '2026-09-29'), 'americas');
+  assert.equal(legacyFolder('americas', '2026-09-30'), 'europe');
+  assert.equal(legacyFolder('asia', '2026-09-29'), 'asia');
+  assert.equal(legacyFolder('europe', '2026-10-01'), 'europe');
+  assert.match(candidateUrls('kills', 'europe', '2026-09-01')[0], /data\/kills\/americas\/2026-09-01/);
+  const oct = candidateUrls('kills', 'europe', '2026-10-02');
+  assert.match(oct[0], /albion-data-europe-2026-10\/main\/kills\/2026-10-02/);
+  assert.match(oct[1], /data\/kills\/europe\/2026-10-02/);
+});
