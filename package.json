@@ -1,1 +1,1 @@
-{"type":"module","private":true,"name":"albion-world-stats","scripts":{"test":"node --test test/rollup.test.mjs"}}
+{"type":"module","private":true,"name":"albion-world-stats","scripts":{"test":"node --test test/rollup.test.mjs test/name-index.test.mjs"}}

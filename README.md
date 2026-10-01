@@ -10,6 +10,8 @@ equipo de cada kill, desde el 25/07/2026). Corre en GitHub Actions: **0 Firebase
 | Gremios: kills, muertes, fama, peleas, ganadas/perdidas + rivales (30 días y todo) | `index/<region>/g/<0-31>.json` |
 | Armas: kills y muertes con cada arma | `index/<region>/weapons.json` |
 | Lo mismo solo de HOY (cada hora) | `today/<region>/...` |
+| Kills por nombre (asesino/víctima): bytes de cada línea en el archivo del día, para que la app pida solo esas líneas por Range (8 días) | `index/<region>/ki/<fecha>/<0-255>.json` (hoy, y ayer hasta que cierra: `today/<region>/ki/...`) |
+| Peleas por gremio, igual (32 días) | `index/<region>/bi/<fecha>/<0-31>.json` (hoy: `today/<region>/bi/...`) |
 | Salud por región | `index/status.json`, `today/status.json` |
 
 Ventanas del índice: `w` (6 días cerrados), `m` (29), `s` (temporada, desde `config.json`), `a` (todo). La app

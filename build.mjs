@@ -12,9 +12,25 @@
 //   index/<region>/g/<n>.json         gremios por parte (32 partes) con sus rivales
 //   index/<region>/weapons.json       armas: kills y muertes por ventana
 //   today/<region>/p|g/<n>.json       lo mismo, solo de hoy (se rehace cada hora)
+//   index|today/<region>/ki/<fecha>/<n>.json  kills: bytes de cada línea por asesino/víctima (256 partes)
+//   index|today/<region>/bi/<fecha>/<n>.json  peleas: bytes de cada línea por gremio (32 partes)
+//                                     (la app pide solo esas líneas por Range: lib/name-index.mjs)
 //   index/status.json, today/status.json  salud por región para el panel
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  BATTLE_INDEX_DAYS,
+  BATTLE_INDEX_SHARDS,
+  battleGuildNames,
+  buildNameIndex,
+  KILL_INDEX_DAYS,
+  KILL_INDEX_SHARDS,
+  killNames,
+  NAME_INDEX_VERSION,
+  writeNameIndex,
+} from './lib/name-index.mjs';
 
 import { bestDayByPlayer, buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
@@ -47,14 +63,48 @@ async function panelSeasonStart() {
 const config = { ...fileConfig, seasonStart: (await panelSeasonStart()) ?? fileConfig.seasonStart ?? null };
 const day = (offset = 0) => new Date(Date.now() + offset * 86400e3).toISOString().slice(0, 10);
 
-async function dayRollup(region, date, stats) {
+async function dayFiles(region, date, stats) {
   const [killsText, battlesText, equipmentText] = await Promise.all([
     fetchDayFile('kills', region, date, stats),
     fetchDayFile('battles', region, date, stats),
     fetchDayFile('equipment', region, date, stats),
   ]);
-  if (killsText === null && battlesText === null) return null;
-  return buildDayRollup({ killsText, battlesText, equipmentText });
+  return { killsText, battlesText, equipmentText };
+}
+
+async function dayRollup(region, date, stats) {
+  const files = await dayFiles(region, date, stats);
+  if (files.killsText === null && files.battlesText === null) return null;
+  return buildDayRollup(files);
+}
+
+// ---- Índice por nombre (lib/name-index.mjs) ----
+const KINDS = [
+  { dir: 'ki', type: 'kills', namesOf: killNames, shards: KILL_INDEX_SHARDS, days: KILL_INDEX_DAYS },
+  { dir: 'bi', type: 'battles', namesOf: battleGuildNames, shards: BATTLE_INDEX_SHARDS, days: BATTLE_INDEX_DAYS },
+];
+/** Un día queda fijo 1 h después de terminar (el scraper commitea cada ~15 min): misma regla que la app. */
+const daySettled = (date) => Date.now() - (Date.parse(`${date}T00:00:00Z`) + 86400e3) > 3600e3;
+const hasNameIndex = (base, kind, date) => readJson(path.join(base, kind.dir, date, '0.json'), null)?.v === NAME_INDEX_VERSION;
+
+/** Indexa `date` para cada tipo (usa `texts` si ya se bajaron) y devuelve los bytes escritos. */
+async function indexDay(base, region, date, stats, texts = {}, only = KINDS) {
+  let bytes = 0;
+  for (const kind of only) {
+    const text = texts[kind.type] !== undefined ? texts[kind.type] : await fetchDayFile(kind.type, region, date, stats);
+    if (text === null) continue; // ese día no tiene archivo: sin índice, la app usa el método de siempre
+    bytes += writeNameIndex(writeJson, path.join(base, kind.dir), region, date, buildNameIndex(text, kind.namesOf, kind.shards));
+  }
+  return bytes;
+}
+
+/** Borra las carpetas de fecha que ya no hacen falta (`keep(kind, fecha)` dice cuáles quedan). */
+function pruneNameIndex(base, keep) {
+  for (const kind of KINDS) {
+    const dir = path.join(base, kind.dir);
+    if (!fs.existsSync(dir)) continue;
+    for (const date of fs.readdirSync(dir)) if (!keep(kind, date)) fs.rmSync(path.join(dir, date), { recursive: true, force: true });
+  }
 }
 
 /** Una fila por ventana, sin los ceros de más: [k, m, a, famaK, famaM, daño, cura]. */
@@ -112,11 +162,20 @@ function writeShards(dir, region, windows, rivals, series, bestDay) {
 async function hourly(region) {
   const stats = { bytes: 0, retries: 0 };
   const today = day();
-  const r = await dayRollup(region, today, stats);
-  if (!r) throw new Error(`sin archivos de hoy (${today})`);
+  const files = await dayFiles(region, today, stats);
+  if (files.killsText === null && files.battlesText === null) throw new Error(`sin archivos de hoy (${today})`);
+  const r = buildDayRollup(files);
   const out = writeShards(path.join(here, 'today'), region, { d: r }, { rd: rivalsByGuild(r.rivals, 5, r.ids) });
   writeJson(path.join(here, 'today', region, 'weapons.json'), { v: 1, region, date: today, builtAt: new Date().toISOString(), d: r.weapons });
-  return { date: today, ...out, downloadedMB: Math.round(stats.bytes / 1e5) / 10, retries: stats.retries, badLines: r.badLines };
+  // Índice por nombre de hoy, y de ayer mientras el scraper todavía le agrega (hasta que cierre y
+  // lo indexe la corrida diaria). Con los textos ya bajados para el resumen: no se baja dos veces.
+  const base = path.join(here, 'today', region);
+  const yesterday = day(-1);
+  const keepYesterday = !daySettled(yesterday);
+  pruneNameIndex(base, (_kind, date) => date === today || (keepYesterday && date === yesterday));
+  let nameIndexBytes = await indexDay(base, region, today, stats, { kills: files.killsText, battles: files.battlesText });
+  if (keepYesterday) nameIndexBytes += await indexDay(base, region, yesterday, stats);
+  return { date: today, ...out, nameIndexBytes, downloadedMB: Math.round(stats.bytes / 1e5) / 10, retries: stats.retries, badLines: r.badLines };
 }
 
 async function daily(region) {
@@ -173,6 +232,21 @@ async function daily(region) {
     ...(windows.s ? { s: windows.s.weapons } : {}),
     a: windows.a.weapons,
   });
+  // 3) Índice por nombre de los días cerrados que falten (normalmente solo ayer), y poda.
+  const base = path.join(here, 'index', region);
+  const recent = (kind) => dateList(day(-kind.days), yesterday).filter((d) => d >= FIRST_DAY && daySettled(d));
+  pruneNameIndex(base, (kind, date) => recent(kind).includes(date));
+  let nameIndexBytes = 0;
+  let nameIndexBuilt = 0;
+  let nameIndexPending = 0;
+  for (const kind of KINDS) {
+    const todo = recent(kind).filter((d) => !hasNameIndex(base, kind, d)).reverse();
+    for (const d of todo.slice(0, maxDays)) {
+      nameIndexBytes += await indexDay(base, region, d, stats, {}, [kind]);
+      nameIndexBuilt += 1;
+    }
+    nameIndexPending += Math.max(0, todo.length - maxDays);
+  }
   const have = dateList(FIRST_DAY, yesterday).filter((d) => readJson(rollupPath(d), null) !== null).length;
   return {
     until: yesterday,
@@ -180,6 +254,9 @@ async function daily(region) {
     daysBuiltNow: built,
     daysWithData: have,
     daysPending: Math.max(0, missing.length - maxDays),
+    nameIndexBuilt,
+    nameIndexPending,
+    nameIndexBytes,
     daysWithoutFiles: empty,
     ...out,
     downloadedMB: Math.round(stats.bytes / 1e5) / 10,
