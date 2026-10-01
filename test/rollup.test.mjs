@@ -103,3 +103,12 @@ test('v2: solo / grupo / ZvZ, healer, arma y build completas, botín y miembros 
   assert.deepEqual(topMembers(r.gm.Lobos, 2)[0], ['Ana', 3, 0, 0, 160]);
   assert.equal(r.gm.Lobos.Dani[2], 1);
 });
+
+test('mejor día: máximo por jugador de kills, muertes y daño entre varios días', async () => {
+  const { bestDayByPlayer } = await import('../lib/rollup.mjs');
+  const d1 = { players: { Ana: [3, 1, 0, 0, 0, 1200.4, 0, 'Lobos'], Beto: [0, 2, 0, 0, 0, 0, 0, ''] } };
+  const d2 = { players: { Ana: [1, 4, 0, 0, 0, 5000, 0, 'Lobos'] } };
+  const out = bestDayByPlayer([d1, d2, { players: undefined }]);
+  assert.deepEqual(out.Ana, [3, 4, 5000]);
+  assert.deepEqual(out.Beto, [0, 2, 0]);
+});

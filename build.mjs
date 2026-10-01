@@ -16,7 +16,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { bestDayByPlayer, buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
@@ -61,8 +61,9 @@ async function dayRollup(region, date, stats) {
 const nums = (v) => (v ? v.slice(0, 7) : null);
 const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
 
-/** `series`: { desde: fecha, guilds: { gremio: [[kills, muertes, famaKill] por día] } } (opcional). */
-function writeShards(dir, region, windows, rivals, series) {
+/** `series`: { desde: fecha, guilds: { gremio: [[kills, muertes, famaKill] por día] } } (opcional).
+ * `bestDay`: { jugador: [kills, muertes, daño] } — su mejor día de la ventana `w` (opcional). */
+function writeShards(dir, region, windows, rivals, series, bestDay) {
   // Jugadores
   const pShards = Array.from({ length: PLAYER_SHARDS }, () => ({}));
   const names = new Set();
@@ -80,6 +81,8 @@ function writeShards(dir, region, windows, rivals, series) {
       }
     }
     if (guild) rec.g = guild;
+    const bd = rec.w ? bestDay?.[name] : undefined;
+    if (bd && (bd[0] || bd[1] || bd[2])) rec.bd = bd;
     if (Object.keys(rec).length > 2 || (Object.keys(rec).length === 2 && !rec.g)) pShards[shardOf(name, PLAYER_SHARDS)][name.toLowerCase()] = rec;
   }
   // Gremios
@@ -140,8 +143,9 @@ async function daily(region) {
   const load = (days) => dateList(days[0], days[1]).map((d) => readJson(rollupPath(d), null)).filter(Boolean);
   const range = (n) => [day(-n), yesterday];
   const seasonStart = typeof config.seasonStart === 'string' && config.seasonStart >= FIRST_DAY ? config.seasonStart : null;
+  const weekRollups = load(range(6));
   const windows = {
-    w: mergeRollups(load(range(6))), // 6 cerrados + hoy = 7 días
+    w: mergeRollups(weekRollups), // 6 cerrados + hoy = 7 días
     m: mergeRollups(load(range(29))), // 29 cerrados + hoy = 30 días
     a: mergeRollups(load([FIRST_DAY, yesterday])),
   };
@@ -158,7 +162,7 @@ async function daily(region) {
       return g ? [g[0], g[1], g[2]] : [0, 0, 0];
     });
   }
-  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds });
+  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups));
   writeJson(path.join(here, 'index', region, 'weapons.json'), {
     v: 1,
     region,

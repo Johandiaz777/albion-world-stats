@@ -6,7 +6,7 @@ equipo de cada kill, desde el 25/07/2026). Corre en GitHub Actions: **0 Firebase
 | Qué | Dónde (ramas) |
 |---|---|
 | Resumen de cada día cerrado por región | `rollups/<region>/<fecha>.json.gz` (solo se agregan) |
-| Jugadores: kills, muertes, asistencias, fama, daño, curación por ventana | `index/<region>/p/<0-255>.json` |
+| Jugadores: kills, muertes, asistencias, fama, daño, curación por ventana, y su mejor día de la semana (`bd`: kills, muertes, daño) | `index/<region>/p/<0-255>.json` |
 | Gremios: kills, muertes, fama, peleas, ganadas/perdidas + rivales (30 días y todo) | `index/<region>/g/<0-31>.json` |
 | Armas: kills y muertes con cada arma | `index/<region>/weapons.json` |
 | Lo mismo solo de HOY (cada hora) | `today/<region>/...` |
