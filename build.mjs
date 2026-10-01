@@ -33,7 +33,7 @@ import {
 } from './lib/name-index.mjs';
 
 import { bestDayByPlayer, buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
-import { dateList, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
+import { dateList, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -93,7 +93,8 @@ async function indexDay(base, region, date, stats, texts = {}, only = KINDS) {
   for (const kind of only) {
     const text = texts[kind.type] !== undefined ? texts[kind.type] : await fetchDayFile(kind.type, region, date, stats);
     if (text === null) continue; // ese día no tiene archivo: sin índice, la app usa el método de siempre
-    bytes += writeNameIndex(writeJson, path.join(base, kind.dir), region, date, buildNameIndex(text, kind.namesOf, kind.shards));
+    const index = buildNameIndex(text, kind.namesOf, kind.shards);
+    bytes += writeNameIndex(writeJson, path.join(base, kind.dir), region, date, index, dayFileSource(kind.type, region, date));
   }
   return bytes;
 }
