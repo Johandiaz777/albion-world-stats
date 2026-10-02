@@ -113,8 +113,9 @@ const nums = (v) => (v ? v.slice(0, 7) : null);
 const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
 
 /** `series`: { desde: fecha, guilds: { gremio: [[kills, muertes, famaKill] por día] } } (opcional).
- * `bestDay`: { jugador: [kills, muertes, daño] } — su mejor día de la ventana `w` (opcional). */
-function writeShards(dir, region, windows, rivals, series, bestDay) {
+ * `bestDay`: { jugador: [kills, muertes, daño] } — su mejor día de la ventana `w` (opcional).
+ * `meta`: campos de cabecera de cada parte (`until` del índice, `date`/`yDate` de hoy). */
+function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   // Jugadores
   const pShards = Array.from({ length: PLAYER_SHARDS }, () => ({}));
   const names = new Set();
@@ -155,28 +156,47 @@ function writeShards(dir, region, windows, rivals, series, bestDay) {
   }
   const builtAt = new Date().toISOString();
   let bytes = 0;
-  pShards.forEach((players, i) => (bytes += writeJson(path.join(dir, region, 'p', `${i}.json`), { v: 1, region, builtAt, players })));
-  gShards.forEach((guilds, i) => (bytes += writeJson(path.join(dir, region, 'g', `${i}.json`), { v: 1, region, builtAt, ...(series ? { smFrom: series.from } : {}), guilds })));
+  pShards.forEach((players, i) => (bytes += writeJson(path.join(dir, region, 'p', `${i}.json`), { v: 1, region, builtAt, ...meta, players })));
+  gShards.forEach((guilds, i) => (bytes += writeJson(path.join(dir, region, 'g', `${i}.json`), { v: 1, region, builtAt, ...meta, ...(series ? { smFrom: series.from } : {}), guilds })));
   return { players: names.size, guilds: gNames.size, bytes };
 }
 
 async function hourly(region) {
   const stats = { bytes: 0, retries: 0 };
   const today = day();
+  const yesterday = day(-1);
   const files = await dayFiles(region, today, stats);
   if (files.killsText === null && files.battlesText === null) throw new Error(`sin archivos de hoy (${today})`);
   const r = buildDayRollup(files);
-  const out = writeShards(path.join(here, 'today'), region, { d: r }, { rd: rivalsByGuild(r.rivals, 5, r.ids) });
+  // Ayer, mientras la corrida diaria todavía no lo cerró en el índice (de 00:00 a ~01:30 UTC): sin
+  // esto, 7 días / 30 días / temporada / todo perdían un día entero en ese rato (índice hasta
+  // anteayer + hoy). Va como ventana `y` con su fecha; la app la suma solo si el índice no la cubre.
+  const indexUntil = readJson(path.join(here, 'index', region, 'weapons.json'), null)?.until ?? null;
+  let yesterdayFiles = null;
+  let ry = null;
+  if (typeof indexUntil === 'string' && indexUntil < yesterday) {
+    yesterdayFiles = await dayFiles(region, yesterday, stats);
+    if (yesterdayFiles.killsText !== null || yesterdayFiles.battlesText !== null) ry = buildDayRollup(yesterdayFiles);
+  }
+  const out = writeShards(
+    path.join(here, 'today'),
+    region,
+    ry ? { d: r, y: ry } : { d: r },
+    { rd: rivalsByGuild(r.rivals, 5, r.ids) },
+    undefined,
+    undefined,
+    ry ? { date: today, yDate: yesterday } : { date: today },
+  );
   writeJson(path.join(here, 'today', region, 'weapons.json'), { v: 1, region, date: today, builtAt: new Date().toISOString(), d: r.weapons });
   // Índice por nombre de hoy, y de ayer mientras el scraper todavía le agrega (hasta que cierre y
   // lo indexe la corrida diaria). Con los textos ya bajados para el resumen: no se baja dos veces.
   const base = path.join(here, 'today', region);
-  const yesterday = day(-1);
   const keepYesterday = !daySettled(yesterday);
   pruneNameIndex(base, (_kind, date) => date === today || (keepYesterday && date === yesterday));
   let nameIndexBytes = await indexDay(base, region, today, stats, { kills: files.killsText, battles: files.battlesText });
-  if (keepYesterday) nameIndexBytes += await indexDay(base, region, yesterday, stats);
-  return { date: today, ...out, nameIndexBytes, downloadedMB: Math.round(stats.bytes / 1e5) / 10, retries: stats.retries, badLines: r.badLines };
+  if (keepYesterday)
+    nameIndexBytes += await indexDay(base, region, yesterday, stats, yesterdayFiles ? { kills: yesterdayFiles.killsText, battles: yesterdayFiles.battlesText } : {});
+  return { date: today, ...(ry ? { yesterdayWindow: yesterday } : {}), ...out, nameIndexBytes, downloadedMB: Math.round(stats.bytes / 1e5) / 10, retries: stats.retries, badLines: r.badLines };
 }
 
 async function daily(region) {
@@ -222,7 +242,7 @@ async function daily(region) {
       return g ? [g[0], g[1], g[2]] : [0, 0, 0];
     });
   }
-  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups));
+  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups), { until: yesterday });
   writeJson(path.join(here, 'index', region, 'weapons.json'), {
     v: 1,
     region,
