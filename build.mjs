@@ -32,7 +32,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { bestDayByPlayer, buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
@@ -206,6 +206,7 @@ async function daily(region) {
   // 1) Días cerrados que falten (primero los más recientes: lo que más se mira).
   const missing = dateList(FIRST_DAY, yesterday).filter((d) => (readJson(rollupPath(d), null)?.v ?? 0) < ROLLUP_VERSION).reverse();
   let built = 0;
+  const builtDates = [];
   const empty = [];
   for (const d of missing.slice(0, maxDays)) {
     const r = await dayRollup(region, d, stats);
@@ -218,18 +219,37 @@ async function daily(region) {
     // ventana usa el v1 que ya había (cuenta igual kills y muertes, solo le faltan los extras).
     writeJson(rollupPath(d), { region, date: d, ...data, v: ROLLUP_VERSION, badLines });
     built += 1;
+    builtDates.push(d);
   }
   // 2) Ventanas (hasta ayer; la app suma el `today/` para que terminen hoy).
   const load = (days) => dateList(days[0], days[1]).map((d) => readJson(rollupPath(d), null)).filter(Boolean);
   const range = (n) => [day(-n), yesterday];
   const seasonStart = typeof config.seasonStart === 'string' && config.seasonStart >= FIRST_DAY ? config.seasonStart : null;
   const weekRollups = load(range(6));
+  // "Todo" y "Temporada" crecen cada día: acumulado incremental en `index/<región>/_acc/` (rama que
+  // se reescribe con un solo commit) en vez de cargar todos los días en memoria (ver advanceAccumulator).
+  const loadDays = (dates) => dates.map((d) => readJson(rollupPath(d), null)).filter(Boolean);
+  const accumulated = (key, from) => {
+    const file = path.join(here, 'index', region, '_acc', `${key}.json.gz`);
+    const { data, acc, rebuilt } = advanceAccumulator(readJson(file, null), {
+      from,
+      until: yesterday,
+      rollupVersion: ROLLUP_VERSION,
+      rebuiltDates: builtDates,
+      loadDays,
+      dateList,
+    });
+    writeJson(file, acc);
+    accRebuilt[key] = rebuilt;
+    return data;
+  };
+  const accRebuilt = {};
   const windows = {
     w: mergeRollups(weekRollups), // 6 cerrados + hoy = 7 días
     m: mergeRollups(load(range(29))), // 29 cerrados + hoy = 30 días
-    a: mergeRollups(load([FIRST_DAY, yesterday])),
+    a: accumulated('a', FIRST_DAY),
   };
-  if (seasonStart) windows.s = mergeRollups(load([seasonStart, yesterday]));
+  if (seasonStart) windows.s = accumulated('s', seasonStart);
   const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids) };
   // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
   // el teléfono no baja 30 archivos de peleas de ~6 MB para dibujarla.
@@ -284,6 +304,7 @@ async function daily(region) {
     nameIndexPending,
     nameIndexBytes,
     daysWithoutFiles: empty,
+    accRebuilt,
     ...out,
     downloadedMB: Math.round(stats.bytes / 1e5) / 10,
     retries: stats.retries,

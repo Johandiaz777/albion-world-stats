@@ -112,3 +112,36 @@ test('mejor día: máximo por jugador de kills, muertes y daño entre varios dí
   assert.deepEqual(out.Ana, [3, 4, 5000]);
   assert.deepEqual(out.Beto, [0, 2, 0]);
 });
+
+test('acumulado incremental: suma solo los días nuevos y se rehace si se rehízo un día viejo', async () => {
+  const { advanceAccumulator } = await import('../lib/rollup.mjs');
+  const { dateList } = await import('../lib/sources.mjs');
+  const dayR = (k) => ({ players: { Ana: [k, 0, 0, 0, 0, 0, 0, 'Lobos'] }, guilds: {}, rivals: {}, weapons: {}, ids: {}, px: {}, gm: {} });
+  const files = { '2026-07-25': dayR(1), '2026-07-26': dayR(2), '2026-07-27': dayR(4) };
+  const loads = [];
+  const loadDays = (dates) => {
+    loads.push(dates);
+    return dates.map((d) => files[d]).filter(Boolean);
+  };
+  const base = { from: '2026-07-25', rollupVersion: 2, loadDays, dateList };
+  const first = advanceAccumulator(null, { ...base, until: '2026-07-26', rebuiltDates: [] });
+  assert.equal(first.data.players.Ana[P.KILLS], 3);
+  assert.equal(first.rebuilt, true);
+  loads.length = 0;
+  const second = advanceAccumulator(first.acc, { ...base, until: '2026-07-27', rebuiltDates: [] });
+  assert.equal(second.data.players.Ana[P.KILLS], 7);
+  assert.deepEqual(loads, [['2026-07-27']]);
+  assert.equal(second.rebuilt, false);
+  // El mismo día otra vez: no carga nada.
+  loads.length = 0;
+  assert.equal(advanceAccumulator(second.acc, { ...base, until: '2026-07-27', rebuiltDates: [] }).data.players.Ana[P.KILLS], 7);
+  assert.deepEqual(loads, []);
+  // Se rehízo un día ya sumado: recalcula todo.
+  files['2026-07-26'] = dayR(10);
+  const redo = advanceAccumulator(second.acc, { ...base, until: '2026-07-27', rebuiltDates: ['2026-07-26'] });
+  assert.equal(redo.data.players.Ana[P.KILLS], 15);
+  assert.equal(redo.rebuilt, true);
+  // Otra versión de resumen u otro inicio: recalcula.
+  assert.equal(advanceAccumulator(second.acc, { ...base, rollupVersion: 3, until: '2026-07-27', rebuiltDates: [] }).rebuilt, true);
+  assert.equal(advanceAccumulator(second.acc, { ...base, from: '2026-07-26', until: '2026-07-27', rebuiltDates: [] }).rebuilt, true);
+});
