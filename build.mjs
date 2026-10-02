@@ -242,7 +242,12 @@ async function daily(region) {
       return g ? [g[0], g[1], g[2]] : [0, 0, 0];
     });
   }
-  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups), { until: yesterday });
+  const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups), {
+    until: yesterday,
+    // Desde cuándo cuentan "Todo" y "Temporada": la app rotula hasta dónde llega cada total.
+    first: FIRST_DAY,
+    ...(seasonStart ? { seasonStart } : {}),
+  });
   writeJson(path.join(here, 'index', region, 'weapons.json'), {
     v: 1,
     region,
