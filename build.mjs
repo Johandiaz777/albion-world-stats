@@ -89,13 +89,15 @@ async function dayRollup(region, date, stats) {
 }
 
 /** Días cerrados recientes cuyo archivo de kills creció desde que se resumieron (el relleno de huecos
- * del escáner agrega kills recuperadas al día de cada una, aunque ese día ya haya cerrado). */
-const GROWTH_CHECK_DAYS = 3;
+ * del escáner agrega kills recuperadas al día de cada una, aunque ese día ya haya cerrado).
+ * Auditoría p60: 8 días (lo que cubre el índice por nombre; antes 3 y el relleno puede tardar más), y
+ * un día que quedó con 0 bytes de kills (fallo de red al cerrarlo) también se rehace si ahora tiene. */
+const GROWTH_CHECK_DAYS = 8;
 async function grownDays(region, yesterday, rollupPath) {
   const out = [];
   for (const d of dateList(day(-GROWTH_CHECK_DAYS), yesterday)) {
     const r = readJson(rollupPath(d), null);
-    if (!r || !(r.kb > 0)) continue;
+    if (!r || typeof r.kb !== 'number') continue;
     const size = await dayFileSize('kills', region, d);
     if (size !== null && size > r.kb) out.push(d);
   }

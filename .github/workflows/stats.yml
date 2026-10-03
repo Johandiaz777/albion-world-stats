@@ -45,8 +45,10 @@ jobs:
           fi
           echo "modo: $MODE"
           echo "MODE=$MODE" >> "$GITHUB_ENV"
-          node build.mjs hourly || echo "::warning::hourly falló"
-          if [ "$MODE" = "daily" ]; then node build.mjs daily || echo "::warning::daily falló"; fi
+          # Auditoría p60: solo se publica lo que terminó bien. Si una corrida muere a mitad de escribir
+          # las partes, lo publicado sigue siendo la versión completa anterior (antes se subía a medias).
+          if node build.mjs hourly; then touch .hourly-ok; else echo "::warning::hourly falló"; fi
+          if [ "$MODE" = "daily" ]; then if node build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
       - name: Publicar
         run: |
           publicar_forzado() {
@@ -54,9 +56,9 @@ jobs:
             ( cd "$1" && rm -rf .git && git init -q -b "$1" && git config user.name stats && git config user.email stats@users.noreply.github.com \
               && git add -A && git commit -q -m "$1 $(date -u +%FT%TZ)" && git push -q -f "$REPO_URL" "$1" ) || echo "::warning::push de $1 falló"
           }
-          publicar_forzado today
+          if [ -f .hourly-ok ]; then publicar_forzado today; else echo "::warning::today sin publicar (hourly no terminó)"; fi
           # El índice (~100 MB) solo cambia en la corrida diaria: no se re-sube cada hora.
-          if [ "$MODE" = "daily" ] && [ -f index/status.json ]; then publicar_forzado index; fi
+          if [ "$MODE" = "daily" ] && [ -f .daily-ok ] && [ -f index/status.json ]; then publicar_forzado index; fi
           if [ -n "$(git -C rollups status --porcelain)" ]; then
             git -C rollups config user.name stats && git -C rollups config user.email stats@users.noreply.github.com
             git -C rollups add -A && git -C rollups commit -q -m "rollups $(date -u +%F)" && git -C rollups push -q "$REPO_URL" HEAD:rollups || echo "::warning::push de rollups falló"
