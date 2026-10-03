@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildDayRollup, G, mergeRollups, P, pidsFromKills, rivalsByGuild, shardOf } from '../lib/rollup.mjs';
+import { buildDayRollup, compactExtras, G, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf } from '../lib/rollup.mjs';
 
 const kill = (killer, kg, victim, vg, fame, parts = []) =>
   JSON.stringify({ killerName: killer, killerGuild: kg, victimName: victim, victimGuild: vg, totalFame: fame, participants: parts });
@@ -163,4 +163,25 @@ test('pidsFromKills: solo los ids de los participantes, el último gana, tolera 
     JSON.stringify({ killerName: 'A', victimName: 'C', participants: [{ name: 'A', id: 'id-a-2' }, { name: 'D', id: '' }] }),
   ].join(String.fromCharCode(10));
   assert.deepEqual(pidsFromKills(text), { A: 'id-a-2' });
+});
+
+test('piezas: casco, pecho, botas y capa por separado; la más usada de cada espacio con sus usos', () => {
+  const killsText = [
+    JSON.stringify({ eventId: 1, killerName: 'A', victimName: 'B', participants: [] }),
+    JSON.stringify({ eventId: 2, killerName: 'A', victimName: 'C', participants: [] }),
+    JSON.stringify({ eventId: 3, killerName: 'A', victimName: 'D', participants: [] }),
+  ].join(String.fromCharCode(10));
+  const eq = (head, cape) => ['T8_2H_CLAYMORE@3', '', head, 'T8_ARMOR_PLATE_SET1@1', 'T8_SHOES_CLOTH_SET1', cape, ''];
+  const equipmentText = [
+    JSON.stringify({ e: 1, k: eq('T8_HEAD_CLOTH_SET1', 'T6_CAPEITEM_FW_MARTLOCK@1'), v: ['T4_MAIN_SWORD', '', '', '', '', '', ''] }),
+    JSON.stringify({ e: 2, k: eq('T8_HEAD_CLOTH_SET1', 'T6_CAPEITEM_FW_MARTLOCK@1'), v: [] }),
+    JSON.stringify({ e: 3, k: eq('T7_HEAD_LEATHER_SET2', ''), v: [] }),
+  ].join(String.fromCharCode(10));
+  const r = buildDayRollup({ killsText, battlesText: null, equipmentText });
+  assert.equal(r.pv, 1);
+  assert.deepEqual(r.px.A.p, piecesFromDay({ killsText, equipmentText }).A);
+  assert.deepEqual(compactExtras(r.px.A).p, [['T8_HEAD_CLOTH_SET1', 2], ['T8_ARMOR_PLATE_SET1@1', 3], ['T8_SHOES_CLOTH_SET1', 3], ['T6_CAPEITEM_FW_MARTLOCK@1', 2]]);
+  assert.equal(compactExtras(r.px.B)?.p, undefined); // arma sin tier completo: no cuenta
+  const sum = mergeRollups([r, { px: { A: { m: [0, 0, 0, 0, 0, 0], h: [0, 0], w: {}, b: {}, l: [0, 0] } } }, r]); // día viejo sin p
+  assert.equal(sum.px.A.p['5|T6_CAPEITEM_FW_MARTLOCK@1'], 4);
 });

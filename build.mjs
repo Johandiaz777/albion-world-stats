@@ -32,7 +32,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, pidsFromKills, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, pidsFromKills, piecesFromDay, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
@@ -41,6 +41,8 @@ const REGIONS = ['europe', 'americas', 'asia'];
 export const PLAYER_SHARDS = 256;
 export const GUILD_SHARDS = 32;
 const MAX_BACKFILL_DAYS = 25; // días cerrados nuevos por región y corrida (el resto, la próxima)
+/** Primer día con equipo completo (ítem con tier y encantamiento) en el archivo de equipo. */
+const PIECES_FIRST_DAY = '2026-09-29';
 
 const args = process.argv.slice(2);
 const mode = args[0] === 'daily' ? 'daily' : 'hourly';
@@ -224,22 +226,37 @@ async function daily(region) {
     built += 1;
     builtDates.push(d);
   }
-  // 1b) Ids de jugadores (parte 58) en los resúmenes de los últimos 29 días hechos antes de `pids`:
-  // se baja solo el archivo de kills y se agrega el campo, sin rehacer el día (los acumulados de
-  // Todo/Temporada siguen sirviendo; las ventanas de 7 y 30 días ya los traen). Tope por corrida.
-  const pidsTodo = dateList(day(-29), yesterday)
-    .filter((d) => d >= FIRST_DAY)
+  // 1b) Campos nuevos (parte 58) en resúmenes hechos antes, sin rehacer el día entero:
+  //   - pids (ids de jugadores) en los últimos 29 días: solo baja el archivo de kills; las ventanas de
+  //     7 y 30 días los traen (Todo/Temporada no hacen falta para abrir un perfil).
+  //   - p (piezas) desde que hay equipo completo (29/09): baja kills + equipo y marca `pv`. Esos días
+  //     entran en builtDates para que Todo y Temporada se rehagan UNA vez con las piezas.
+  const recentDays = new Set(dateList(day(-29), yesterday));
+  const patchTodo = dateList(PIECES_FIRST_DAY, yesterday)
+    .concat([...recentDays])
+    .filter((d, i, all) => d >= FIRST_DAY && all.indexOf(d) === i)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return r && !r.pids;
+      return r && ((recentDays.has(d) && !r.pids) || (d >= PIECES_FIRST_DAY && r.pv !== 1));
     })
+    .sort()
     .reverse();
-  let pidsAdded = 0;
-  for (const d of pidsTodo.slice(0, maxDays)) {
-    const killsText = await fetchDayFile('kills', region, d, stats);
+  let patched = 0;
+  for (const d of patchTodo.slice(0, maxDays)) {
     const r = readJson(rollupPath(d), null);
-    writeJson(rollupPath(d), { ...r, pids: killsText === null ? {} : pidsFromKills(killsText) });
-    pidsAdded += 1;
+    const killsText = await fetchDayFile('kills', region, d, stats);
+    const next = { ...r };
+    if (!r.pids) next.pids = killsText === null ? {} : pidsFromKills(killsText);
+    if (d >= PIECES_FIRST_DAY && r.pv !== 1) {
+      const equipmentText = await fetchDayFile('equipment', region, d, stats);
+      const pieces = killsText === null || equipmentText === null ? {} : piecesFromDay({ killsText, equipmentText });
+      next.px = { ...r.px };
+      for (const [name, p] of Object.entries(pieces)) if (next.px[name]) next.px[name] = { ...next.px[name], p };
+      next.pv = 1;
+      builtDates.push(d);
+    }
+    writeJson(rollupPath(d), next);
+    patched += 1;
   }
   // 2) Ventanas (hasta ayer; la app suma el `today/` para que terminen hoy).
   const load = (days) => dateList(days[0], days[1]).map((d) => readJson(rollupPath(d), null)).filter(Boolean);
@@ -320,8 +337,8 @@ async function daily(region) {
     daysBuiltNow: built,
     daysWithData: have,
     daysPending: Math.max(0, missing.length - maxDays),
-    pidsAdded,
-    pidsPending: Math.max(0, pidsTodo.length - maxDays),
+    patched,
+    pidsPending: Math.max(0, patchTodo.length - maxDays),
     nameIndexBuilt,
     nameIndexPending,
     nameIndexBytes,
