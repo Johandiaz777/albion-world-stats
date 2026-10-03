@@ -8,10 +8,13 @@
 //
 // Carpetas (el workflow las publica en ramas):
 //   rollups/<region>/<fecha>.json.gz  resumen de cada día cerrado (rama `rollups`, solo se agregan)
-//   index/<region>/p/<n>.json         jugadores por parte (256 partes por hash del nombre)
-//   index/<region>/g/<n>.json         gremios por parte (32 partes) con sus rivales
+//   index/<region>/players/<n>.json   jugadores por parte (2048 partes por hash del nombre)
+//   index/<region>/guilds/<n>.json    gremios por parte (512 partes) con sus rivales
+//   index/<region>/ids/<n>.json       directorio nombre → id del juego (1024 partes; todo lo visto)
+//   index/<region>/p|g/<n>.json       lo mismo en 256/32 partes, para las versiones de la app
+//                                     anteriores a la 2.55.0 (se deja de escribir el LEGACY_UNTIL)
 //   index/<region>/weapons.json       armas: kills y muertes por ventana
-//   today/<region>/p|g/<n>.json       lo mismo, solo de hoy (se rehace cada hora)
+//   today/<region>/players|guilds|ids|p|g/<n>.json  lo mismo, solo de hoy (se rehace cada hora)
 //   index|today/<region>/ki/<fecha>/<n>.json  kills: bytes de cada línea por asesino/víctima (256 partes)
 //   index|today/<region>/bi/<fecha>/<n>.json  peleas: bytes de cada línea por gremio (32 partes)
 //                                     (la app pide solo esas líneas por Range: lib/name-index.mjs)
@@ -38,8 +41,18 @@ import { readJson, writeJson } from './lib/store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REGIONS = ['europe', 'americas', 'asia'];
-export const PLAYER_SHARDS = 256;
-export const GUILD_SHARDS = 32;
+/** Parte 59 (medido 03/10): con 256 partes cada una tenía ~700 jugadores de Europa (460 KB, 75 KB
+ * comprimida) y abrir un perfil bajaba eso para leer UNO. Con 2048 son ~90 (~57 KB, ~10 KB
+ * comprimida). Gremios: 32 partes eran 605 KB (221 KB comprimida) por gremio; con 512, ~38 KB. */
+export const PLAYER_SHARDS = 2048;
+export const GUILD_SHARDS = 512;
+/** Directorio nombre → id: ~150 jugadores por parte (~5 KB, ~3 KB comprimida). La app busca acá el
+ * id y abre el perfil por id en Albion (0,3 s) en vez de la búsqueda por nombre (15-40 s). */
+export const ID_SHARDS = 1024;
+/** Las versiones de la app hasta la 2.54.0 leen `p/` (256) y `g/` (32): se siguen escribiendo
+ * hasta que la 2.55.0 esté en Play y los testers actualicen. */
+const LEGACY_SHARDS = { p: 256, g: 32 };
+const LEGACY_UNTIL = '2026-10-31';
 const MAX_BACKFILL_DAYS = 25; // días cerrados nuevos por región y corrida (el resto, la próxima)
 /** Primer día con equipo completo (ítem con tier y encantamiento) en el archivo de equipo. */
 const PIECES_FIRST_DAY = '2026-09-29';
@@ -119,7 +132,7 @@ const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
  * `meta`: campos de cabecera de cada parte (`until` del índice, `date`/`yDate` de hoy). */
 function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   // Jugadores
-  const pShards = Array.from({ length: PLAYER_SHARDS }, () => ({}));
+  const pRecs = {};
   const names = new Set();
   for (const w of Object.values(windows)) for (const n of Object.keys(w.players)) names.add(n);
   for (const name of names) {
@@ -135,15 +148,16 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       }
     }
     if (guild) rec.g = guild;
-    // Id del juego (ventana más reciente primero): la app abre el perfil sin buscar por nombre.
-    const pid = Object.values(windows).find((w) => w.pids?.[name])?.pids[name];
-    if (pid) rec.i = pid;
     const bd = rec.w ? bestDay?.[name] : undefined;
     if (bd && (bd[0] || bd[1] || bd[2])) rec.bd = bd;
-    if (Object.keys(rec).length > 2 || (Object.keys(rec).length === 2 && !rec.g)) pShards[shardOf(name, PLAYER_SHARDS)][name.toLowerCase()] = rec;
+    if (Object.keys(rec).length > 2 || (Object.keys(rec).length === 2 && !rec.g)) pRecs[name.toLowerCase()] = rec;
   }
+  // Directorio de ids: UN id por jugador (el de la ventana más reciente), de todos los que se vieron,
+  // aunque no tengan actividad en la ventana. Va aparte de las estadísticas: buscar un id baja ~3 KB.
+  const ids = {};
+  for (const w of Object.values(windows).reverse()) for (const [name, id] of Object.entries(w.pids ?? {})) ids[name.toLowerCase()] = id;
   // Gremios
-  const gShards = Array.from({ length: GUILD_SHARDS }, () => ({}));
+  const gRecs = {};
   const gNames = new Set();
   for (const w of Object.values(windows)) for (const n of Object.keys(w.guilds)) gNames.add(n);
   for (const name of gNames) {
@@ -157,13 +171,35 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
     if (series?.guilds[name]) rec.sm = series.guilds[name];
     const id = Object.values(windows).find((w) => w.ids?.[name])?.ids[name];
     if (id) rec.id = id;
-    gShards[shardOf(name, GUILD_SHARDS)][name.toLowerCase()] = rec;
+    gRecs[name.toLowerCase()] = rec;
   }
   const builtAt = new Date().toISOString();
+  const gHead = series ? { smFrom: series.from } : {};
   let bytes = 0;
-  pShards.forEach((players, i) => (bytes += writeJson(path.join(dir, region, 'p', `${i}.json`), { v: 1, region, builtAt, ...meta, players })));
-  gShards.forEach((guilds, i) => (bytes += writeJson(path.join(dir, region, 'g', `${i}.json`), { v: 1, region, builtAt, ...meta, ...(series ? { smFrom: series.from } : {}), guilds })));
-  return { players: names.size, guilds: gNames.size, bytes };
+  const spread = (recs, count) => {
+    const shards = Array.from({ length: count }, () => ({}));
+    for (const [key, rec] of Object.entries(recs)) shards[shardOf(key, count)][key] = rec;
+    return shards;
+  };
+  const write = (sub, shards, field, head = {}) => {
+    // Sin restos de una corrida con otro número de partes.
+    fs.rmSync(path.join(dir, region, sub), { recursive: true, force: true });
+    shards.forEach((part, i) => (bytes += writeJson(path.join(dir, region, sub, `${i}.json`), { v: 1, region, builtAt, ...meta, ...head, [field]: part })));
+  };
+  write('players', spread(pRecs, PLAYER_SHARDS), 'players');
+  write('guilds', spread(gRecs, GUILD_SHARDS), 'guilds', gHead);
+  write('ids', spread(ids, ID_SHARDS), 'ids');
+  if (day() <= LEGACY_UNTIL) {
+    // Formato viejo: con el id dentro del registro (`i`), que es de donde lo sacan esas versiones.
+    const legacy = {};
+    for (const [key, rec] of Object.entries(pRecs)) legacy[key] = ids[key] ? { ...rec, i: ids[key] } : rec;
+    write('p', spread(legacy, LEGACY_SHARDS.p), 'players');
+    write('g', spread(gRecs, LEGACY_SHARDS.g), 'guilds', gHead);
+  } else {
+    fs.rmSync(path.join(dir, region, 'p'), { recursive: true, force: true });
+    fs.rmSync(path.join(dir, region, 'g'), { recursive: true, force: true });
+  }
+  return { players: names.size, guilds: gNames.size, ids: Object.keys(ids).length, bytes };
 }
 
 async function hourly(region) {
