@@ -40,7 +40,7 @@ jobs:
           if [ -z "$MODE" ]; then
             HORA=$(date -u +%H)
             # Diario a la 01 UTC, o si la última corrida diaria dejó días por completar.
-            PEND=$(node -e "try{const s=require('./index/status.json');console.log(Object.values(s.regions||{}).some(r=>r.daysPending>0||r.nameIndexPending>0)?1:0)}catch{console.log(1)}")
+            PEND=$(node -e "try{const s=require('./index/status.json');console.log(Object.values(s.regions||{}).some(r=>r.daysPending>0||r.nameIndexPending>0||r.pidsPending!==0)?1:0)}catch{console.log(1)}")
             if [ "$HORA" = "01" ] || [ "$PEND" = "1" ]; then MODE=daily; else MODE=hourly; fi
           fi
           echo "modo: $MODE"

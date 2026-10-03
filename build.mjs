@@ -32,7 +32,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, pidsFromKills, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
@@ -224,6 +224,23 @@ async function daily(region) {
     built += 1;
     builtDates.push(d);
   }
+  // 1b) Ids de jugadores (parte 58) en los resúmenes de los últimos 29 días hechos antes de `pids`:
+  // se baja solo el archivo de kills y se agrega el campo, sin rehacer el día (los acumulados de
+  // Todo/Temporada siguen sirviendo; las ventanas de 7 y 30 días ya los traen). Tope por corrida.
+  const pidsTodo = dateList(day(-29), yesterday)
+    .filter((d) => d >= FIRST_DAY)
+    .filter((d) => {
+      const r = readJson(rollupPath(d), null);
+      return r && !r.pids;
+    })
+    .reverse();
+  let pidsAdded = 0;
+  for (const d of pidsTodo.slice(0, maxDays)) {
+    const killsText = await fetchDayFile('kills', region, d, stats);
+    const r = readJson(rollupPath(d), null);
+    writeJson(rollupPath(d), { ...r, pids: killsText === null ? {} : pidsFromKills(killsText) });
+    pidsAdded += 1;
+  }
   // 2) Ventanas (hasta ayer; la app suma el `today/` para que terminen hoy).
   const load = (days) => dateList(days[0], days[1]).map((d) => readJson(rollupPath(d), null)).filter(Boolean);
   const range = (n) => [day(-n), yesterday];
@@ -303,6 +320,8 @@ async function daily(region) {
     daysBuiltNow: built,
     daysWithData: have,
     daysPending: Math.max(0, missing.length - maxDays),
+    pidsAdded,
+    pidsPending: Math.max(0, pidsTodo.length - maxDays),
     nameIndexBuilt,
     nameIndexPending,
     nameIndexBytes,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildDayRollup, G, mergeRollups, P, rivalsByGuild, shardOf } from '../lib/rollup.mjs';
+import { buildDayRollup, G, mergeRollups, P, pidsFromKills, rivalsByGuild, shardOf } from '../lib/rollup.mjs';
 
 const kill = (killer, kg, victim, vg, fame, parts = []) =>
   JSON.stringify({ killerName: killer, killerGuild: kg, victimName: victim, victimGuild: vg, totalFame: fame, participants: parts });
@@ -154,4 +154,13 @@ test('pids: id de cada jugador desde los participantes; al sumar días queda el 
   assert.equal(viejo.pids.Beto, undefined); // la víctima no trae id en las kills del scraper
   assert.equal(mergeRollups([viejo, nuevo]).pids.Ana, 'id-nuevo');
   assert.deepEqual(mergeRollups([{ players: {} }]).pids, {}); // resúmenes viejos sin pids
+});
+
+test('pidsFromKills: solo los ids de los participantes, el último gana, tolera líneas rotas', () => {
+  const text = [
+    JSON.stringify({ killerName: 'A', victimName: 'B', participants: [{ name: 'A', id: 'id-a-1' }, { name: 'C' }] }),
+    '{roto',
+    JSON.stringify({ killerName: 'A', victimName: 'C', participants: [{ name: 'A', id: 'id-a-2' }, { name: 'D', id: '' }] }),
+  ].join(String.fromCharCode(10));
+  assert.deepEqual(pidsFromKills(text), { A: 'id-a-2' });
 });
