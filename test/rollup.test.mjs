@@ -188,3 +188,17 @@ test('piezas: casco, pecho, botas y capa por separado; la más usada de cada esp
   const sum = mergeRollups([r, { px: { A: { m: [0, 0, 0, 0, 0, 0], h: [0, 0], w: {}, b: {}, l: [0, 0] } } }, r]); // día viejo sin p
   assert.equal(sum.px.A.p['5|T6_CAPEITEM_FW_MARTLOCK@1'], 4);
 });
+
+test('parte 59: una kill repetida en el archivo (mismo eventId) se cuenta UNA vez, también su equipo', () => {
+  const k1 = JSON.stringify({ eventId: 7, battleId: 7, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 500, participants: [{ name: 'Ana', guildName: 'Lobos', damageDone: 10, healingDone: 0 }] });
+  const k2 = JSON.stringify({ eventId: 8, battleId: 8, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Caro', victimGuild: 'Osos', totalFame: 300, participants: [] });
+  const eq = JSON.stringify({ e: 7, k: ['T8_2H_CLAYMORE@3', '', 'T8_HEAD_PLATE_SET1', 'T8_ARMOR_PLATE_SET1', 'T8_SHOES_PLATE_SET1', 'T6_CAPE', ''], v: ['T4_MAIN_SWORD', '', '', '', '', '', ''] });
+  const r = buildDayRollup({ killsText: [k1, k1, k2, k1].join('\n'), battlesText: '', equipmentText: [eq, eq].join('\n') });
+  assert.equal(r.players.Ana[P.KILLS], 2);
+  assert.equal(r.players.Ana[P.KFAME], 800);
+  assert.equal(r.players.Beto[P.DEATHS], 1);
+  assert.equal(r.players.Ana[P.DAMAGE], 10);
+  assert.equal(r.guilds.Lobos[G.KILLS], 2);
+  const pieces = piecesFromDay({ killsText: [k1, k1].join('\n'), equipmentText: [eq, eq].join('\n') });
+  assert.equal(Object.values(pieces.Ana).reduce((a, b) => a + b, 0), 4); // casco, pecho, botas, capa: una vez cada uno
+});

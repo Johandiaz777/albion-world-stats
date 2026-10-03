@@ -45,3 +45,12 @@ test('archivo vacío o nulo: índice vacío, sin errores', () => {
   assert.equal(bytes, 0);
   assert.equal(shards.length, 4);
 });
+
+test('parte 59: una línea repetida (mismo eventId) se indexa una sola vez, la primera', () => {
+  const line = JSON.stringify({ eventId: 5, killerName: 'Ana', victimName: 'Beto' });
+  const other = JSON.stringify({ eventId: 6, killerName: 'Ana', victimName: 'Caro' });
+  const text = [line, line, other].join('\n') + '\n';
+  const { shards } = buildNameIndex(text, killNames, 256);
+  const refs = shards[shardOf('Ana', 256)].ana;
+  assert.deepEqual(refs, [0, Buffer.byteLength(line), 2 * (Buffer.byteLength(line) + 1), Buffer.byteLength(other)]);
+});

@@ -33,8 +33,8 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, pidsFromKills, piecesFromDay, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
-import { dateList, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, pidsFromKills, piecesFromDay, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { dateList, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -84,7 +84,22 @@ async function dayFiles(region, date, stats) {
 async function dayRollup(region, date, stats) {
   const files = await dayFiles(region, date, stats);
   if (files.killsText === null && files.battlesText === null) return null;
-  return buildDayRollup(files);
+  // `kb`: bytes del archivo de kills resumido (para saber si después creció: relleno de huecos).
+  return { ...buildDayRollup(files), kb: files.killsText ? Buffer.byteLength(files.killsText) : 0 };
+}
+
+/** Días cerrados recientes cuyo archivo de kills creció desde que se resumieron (el relleno de huecos
+ * del escáner agrega kills recuperadas al día de cada una, aunque ese día ya haya cerrado). */
+const GROWTH_CHECK_DAYS = 3;
+async function grownDays(region, yesterday, rollupPath) {
+  const out = [];
+  for (const d of dateList(day(-GROWTH_CHECK_DAYS), yesterday)) {
+    const r = readJson(rollupPath(d), null);
+    if (!r || !(r.kb > 0)) continue;
+    const size = await dayFileSize('kills', region, d);
+    if (size !== null && size > r.kb) out.push(d);
+  }
+  return out;
 }
 
 // ---- Índice por nombre (lib/name-index.mjs) ----
@@ -232,7 +247,18 @@ async function daily(region) {
   const yesterday = day(-1);
   const rollupPath = (d) => path.join(here, 'rollups', region, `${d}.json.gz`);
   // 1) Días cerrados que falten (primero los más recientes: lo que más se mira).
-  const missing = dateList(FIRST_DAY, yesterday).filter((d) => (readJson(rollupPath(d), null)?.v ?? 0) < ROLLUP_VERSION).reverse();
+  // También los días con kills repetidas hechos antes de deduplicar (`dd`): se rehacen enteros.
+  const grown = await grownDays(region, yesterday, rollupPath);
+  const missing = dateList(FIRST_DAY, yesterday)
+    .filter((d) => {
+      const r = readJson(rollupPath(d), null);
+      return (r?.v ?? 0) < ROLLUP_VERSION || (d >= DEDUP_FIRST_DAY && r?.dd !== 1) || grown.includes(d);
+    })
+    .reverse();
+  // Su índice por nombre también se rehace (paso 3): las líneas nuevas quedaban fuera.
+  for (const d of grown) {
+    for (const kind of KINDS) fs.rmSync(path.join(here, 'index', region, kind.dir, d), { recursive: true, force: true });
+  }
   let built = 0;
   const builtDates = [];
   const empty = [];
@@ -245,7 +271,7 @@ async function daily(region) {
     const { badLines, ...data } = r;
     // Resúmenes v1 (sin extras) se rehacen de a poco, los más recientes primero; mientras tanto la
     // ventana usa el v1 que ya había (cuenta igual kills y muertes, solo le faltan los extras).
-    writeJson(rollupPath(d), { region, date: d, ...data, v: ROLLUP_VERSION, badLines });
+    writeJson(rollupPath(d), { region, date: d, ...data, v: ROLLUP_VERSION, dd: 1, badLines });
     built += 1;
     builtDates.push(d);
   }
@@ -360,6 +386,7 @@ async function daily(region) {
     daysBuiltNow: built,
     daysWithData: have,
     daysPending: Math.max(0, missing.length - maxDays),
+    grownDays: grown,
     patched,
     pidsPending: Math.max(0, patchTodo.length - maxDays),
     nameIndexBuilt,
