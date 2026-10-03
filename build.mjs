@@ -11,10 +11,8 @@
 //   index/<region>/players/<n>.json   jugadores por parte (2048 partes por hash del nombre)
 //   index/<region>/guilds/<n>.json    gremios por parte (512 partes) con sus rivales
 //   index/<region>/ids/<n>.json       directorio nombre → id del juego (1024 partes; todo lo visto)
-//   index/<region>/p|g/<n>.json       lo mismo en 256/32 partes, para las versiones de la app
-//                                     anteriores a la 2.55.0 (se deja de escribir el LEGACY_UNTIL)
 //   index/<region>/weapons.json       armas: kills y muertes por ventana
-//   today/<region>/players|guilds|ids|p|g/<n>.json  lo mismo, solo de hoy (se rehace cada hora)
+//   today/<region>/players|guilds|ids/<n>.json  lo mismo, solo de hoy (se rehace cada hora)
 //   index|today/<region>/ki/<fecha>/<n>.json  kills: bytes de cada línea por asesino/víctima (256 partes)
 //   index|today/<region>/bi/<fecha>/<n>.json  peleas: bytes de cada línea por gremio (32 partes)
 //                                     (la app pide solo esas líneas por Range: lib/name-index.mjs)
@@ -49,10 +47,6 @@ export const GUILD_SHARDS = 512;
 /** Directorio nombre → id: ~150 jugadores por parte (~5 KB, ~3 KB comprimida). La app busca acá el
  * id y abre el perfil por id en Albion (0,3 s) en vez de la búsqueda por nombre (15-40 s). */
 export const ID_SHARDS = 1024;
-/** Las versiones de la app hasta la 2.54.0 leen `p/` (256) y `g/` (32): se siguen escribiendo
- * hasta que la 2.55.0 esté en Play y los testers actualicen. */
-const LEGACY_SHARDS = { p: 256, g: 32 };
-const LEGACY_UNTIL = '2026-10-31';
 const MAX_BACKFILL_DAYS = 25; // días cerrados nuevos por región y corrida (el resto, la próxima)
 /** Primer día con equipo completo (ítem con tier y encantamiento) en el archivo de equipo. */
 const PIECES_FIRST_DAY = '2026-09-29';
@@ -189,16 +183,9 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   write('players', spread(pRecs, PLAYER_SHARDS), 'players');
   write('guilds', spread(gRecs, GUILD_SHARDS), 'guilds', gHead);
   write('ids', spread(ids, ID_SHARDS), 'ids');
-  if (day() <= LEGACY_UNTIL) {
-    // Formato viejo: con el id dentro del registro (`i`), que es de donde lo sacan esas versiones.
-    const legacy = {};
-    for (const [key, rec] of Object.entries(pRecs)) legacy[key] = ids[key] ? { ...rec, i: ids[key] } : rec;
-    write('p', spread(legacy, LEGACY_SHARDS.p), 'players');
-    write('g', spread(gRecs, LEGACY_SHARDS.g), 'guilds', gHead);
-  } else {
-    fs.rmSync(path.join(dir, region, 'p'), { recursive: true, force: true });
-    fs.rmSync(path.join(dir, region, 'g'), { recursive: true, force: true });
-  }
+  // Formato viejo (256/32 partes con el id dentro): sin testers todavía, ya no se publica (parte 59).
+  fs.rmSync(path.join(dir, region, 'p'), { recursive: true, force: true });
+  fs.rmSync(path.join(dir, region, 'g'), { recursive: true, force: true });
   return { players: names.size, guilds: gNames.size, ids: Object.keys(ids).length, bytes };
 }
 
