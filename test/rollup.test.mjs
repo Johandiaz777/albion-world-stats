@@ -145,3 +145,13 @@ test('acumulado incremental: suma solo los días nuevos y se rehace si se rehíz
   assert.equal(advanceAccumulator(second.acc, { ...base, rollupVersion: 3, until: '2026-07-27', rebuiltDates: [] }).rebuilt, true);
   assert.equal(advanceAccumulator(second.acc, { ...base, from: '2026-07-26', until: '2026-07-27', rebuiltDates: [] }).rebuilt, true);
 });
+
+test('pids: id de cada jugador desde los participantes; al sumar días queda el más reciente', () => {
+  const line = (id) => JSON.stringify({ eventId: 1, battleId: null, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: '', totalFame: 10, participantsCount: 1, participants: [{ id, name: 'Ana', guildName: 'Lobos', damageDone: 5, healingDone: 0 }] });
+  const viejo = buildDayRollup({ killsText: line('id-viejo'), battlesText: '', equipmentText: '' });
+  const nuevo = buildDayRollup({ killsText: line('id-nuevo'), battlesText: '', equipmentText: '' });
+  assert.equal(viejo.pids.Ana, 'id-viejo');
+  assert.equal(viejo.pids.Beto, undefined); // la víctima no trae id en las kills del scraper
+  assert.equal(mergeRollups([viejo, nuevo]).pids.Ana, 'id-nuevo');
+  assert.deepEqual(mergeRollups([{ players: {} }]).pids, {}); // resúmenes viejos sin pids
+});

@@ -133,6 +133,9 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       }
     }
     if (guild) rec.g = guild;
+    // Id del juego (ventana más reciente primero): la app abre el perfil sin buscar por nombre.
+    const pid = Object.values(windows).find((w) => w.pids?.[name])?.pids[name];
+    if (pid) rec.i = pid;
     const bd = rec.w ? bestDay?.[name] : undefined;
     if (bd && (bd[0] || bd[1] || bd[2])) rec.bd = bd;
     if (Object.keys(rec).length > 2 || (Object.keys(rec).length === 2 && !rec.g)) pShards[shardOf(name, PLAYER_SHARDS)][name.toLowerCase()] = rec;
