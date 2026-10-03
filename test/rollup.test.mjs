@@ -163,6 +163,9 @@ test('pidsFromKills: solo los ids de los participantes, el último gana, tolera 
     JSON.stringify({ killerName: 'A', victimName: 'C', participants: [{ name: 'A', id: 'id-a-2' }, { name: 'D', id: '' }] }),
   ].join(String.fromCharCode(10));
   assert.deepEqual(pidsFromKills(text), { A: 'id-a-2' });
+  const conVictima = JSON.stringify({ killerName: 'A', victimName: 'V', victimId: 'id-v', participants: [{ name: 'A', id: 'id-a' }] });
+  assert.deepEqual(pidsFromKills(conVictima), { A: 'id-a', V: 'id-v' });
+  assert.equal(buildDayRollup({ killsText: conVictima, battlesText: null, equipmentText: null }).pids.V, 'id-v');
 });
 
 test('piezas: casco, pecho, botas y capa por separado; la más usada de cada espacio con sus usos', () => {
