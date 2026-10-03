@@ -3,26 +3,39 @@ name: stats
 # vez al día (01:20 UTC, o si faltan días por completar) cierra los días, completa hacia atrás y
 # rearma los índices. Ramas: `rollups` (un archivo por día y región, SOLO se agregan), `index` y
 # `today` (un solo commit reescrito con push -f: no crecen ni pueden tener conflictos).
+# Parte 63: el cron de GitHub descartaba corridas (el 03/10, 2 de 12 entre las 10:34 y las 22:20 UTC) y el
+# índice de "hoy" quedaba horas sin actualizar. Como el escáner, cada corrida encadena la siguiente
+# (`mode: auto` espera al minuto 20 de la hora y decide horaria o diaria como el cron); el cron queda
+# de respaldo por si la cadena se corta, y `concurrency` deja una sola en cola.
 on:
   schedule:
     - cron: '20 * * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'hourly o daily'
+        description: 'hourly, daily o auto (espera al minuto 20 y decide como el cron)'
         default: 'daily'
 concurrency:
   group: stats
   cancel-in-progress: false
 permissions:
   contents: write
+  actions: write
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Hasta 59 min esperando el minuto 20 (mode auto) + la construcción.
+    timeout-minutes: 120
     env:
       REPO_URL: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
     steps:
+      - name: Esperar al minuto 20 (cadena)
+        if: github.event.inputs.mode == 'auto'
+        run: |
+          s=$(( ( (20 - 10#$(date -u +%M) + 60) % 60 ) * 60 - 10#$(date -u +%S) ))
+          [ "$s" -le 0 ] && s=$(( s + 3600 ))
+          echo "espera $s s"
+          sleep "$s"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -37,6 +50,7 @@ jobs:
       - name: Construir
         run: |
           MODE="${{ github.event.inputs.mode }}"
+          [ "$MODE" = "auto" ] && MODE=""
           if [ -z "$MODE" ]; then
             HORA=$(date -u +%H)
             # Diario a la 01 UTC, o si la última corrida diaria dejó días por completar.
@@ -63,3 +77,10 @@ jobs:
             git -C rollups config user.name stats && git -C rollups config user.email stats@users.noreply.github.com
             git -C rollups add -A && git -C rollups commit -q -m "rollups $(date -u +%F)" && git -C rollups push -q "$REPO_URL" HEAD:rollups || echo "::warning::push de rollups falló"
           fi
+
+      # Encadena la próxima hora sin depender del cron. `always()`: la cadena no se corta aunque esta
+      # corrida haya fallado (la siguiente vuelve a intentar).
+      - name: Encadenar la próxima hora
+        if: always()
+        run: |
+          curl -sf -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/workflows/stats.yml/dispatches" -d '{"ref":"${{ github.ref_name }}","inputs":{"mode":"auto"}}' || echo "::warning::no se pudo encadenar (queda el cron)"
