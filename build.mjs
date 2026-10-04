@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, pidsFromKills, piecesFromDay, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, writeJson } from './lib/store.mjs';
 
@@ -154,7 +154,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       if (hasActivity(v)) {
         rec[key] = nums(v);
         if (!guild && v[P.GUILD]) guild = v[P.GUILD];
-        const x = compactExtras(w.px?.[name]);
+        const x = compactExtras(w.px?.[name], w.gw === true || (w.pv ?? 0) >= PIECES_VERSION);
         if (x) rec["x" + key] = x;
       }
     }
@@ -288,7 +288,7 @@ async function daily(region) {
     .filter((d, i, all) => d >= FIRST_DAY && all.indexOf(d) === i)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return r && ((recentDays.has(d) && !r.pids) || (d >= PIECES_FIRST_DAY && r.pv !== 1));
+      return r && ((recentDays.has(d) && !r.pids) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION));
     })
     .sort()
     .reverse();
@@ -298,13 +298,19 @@ async function daily(region) {
     const killsText = await fetchDayFile('kills', region, d, stats);
     const next = { ...r };
     if (!r.pids) next.pids = killsText === null ? {} : pidsFromKills(killsText);
-    if (d >= PIECES_FIRST_DAY && r.pv !== 1) {
-      const equipmentText = await fetchDayFile('equipment', region, d, stats);
-      const pieces = killsText === null || equipmentText === null ? {} : piecesFromDay({ killsText, equipmentText });
-      next.px = { ...r.px };
-      for (const [name, p] of Object.entries(pieces)) if (next.px[name]) next.px[name] = { ...next.px[name], p };
-      next.pv = 1;
-      builtDates.push(d);
+    if (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) {
+      // Parte 65: el equipo del día con usos y victorias (w, b y p de la MISMA pasada, mismo criterio
+      // que un día nuevo). Una sola vez por día: queda marcado `pv: 2`.
+      // Si un archivo no llegó (fetchDayFile ya reintentó 4 veces), el día NO se marca: se completa
+      // en la próxima corrida en vez de quedar sin victorias para siempre (un 404 es un solo pedido).
+      const equipmentText = killsText === null ? null : await fetchDayFile('equipment', region, d, stats);
+      if (killsText !== null && equipmentText !== null) {
+        const gear = gearFromDay({ killsText, equipmentText });
+        next.px = { ...r.px };
+        for (const [name, g] of Object.entries(gear)) if (next.px[name]) next.px[name] = { ...next.px[name], ...g };
+        next.pv = PIECES_VERSION;
+        builtDates.push(d);
+      }
     }
     writeJson(rollupPath(d), next);
     patched += 1;

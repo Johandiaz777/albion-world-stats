@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildDayRollup, compactExtras, G, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf } from '../lib/rollup.mjs';
+import { buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
 
 const kill = (killer, kg, victim, vg, fame, parts = []) =>
   JSON.stringify({ killerName: killer, killerGuild: kg, victimName: victim, victimGuild: vg, totalFame: fame, participants: parts });
@@ -94,7 +94,7 @@ test('v2: solo / grupo / ZvZ, healer, arma y build completas, botín y miembros 
   assert.deepEqual(r.px.Dani.h, [1, 1]);
   assert.deepEqual(r.px.Ana.l, [1500, 0]);
   assert.deepEqual(r.px.Beto.l, [0, 1500]);
-  assert.equal(r.px.Ana.w['T8_2H_CLAYMORE@3'], 2);
+  assert.deepEqual(r.px.Ana.w['T8_2H_CLAYMORE@3'], [2, 2]); // usos y victorias en el mismo valor
   assert.equal(r.px.Beto.w['2H_BOW'], undefined); // línea vieja (solo base): no cuenta
   assert.equal(r.weapons['2H_CLAYMORE'][0], 2); // armas por base, como siempre
   const x = compactExtras(r.px.Ana);
@@ -181,12 +181,14 @@ test('piezas: casco, pecho, botas y capa por separado; la más usada de cada esp
     JSON.stringify({ e: 3, k: eq('T7_HEAD_LEATHER_SET2', ''), v: [] }),
   ].join(String.fromCharCode(10));
   const r = buildDayRollup({ killsText, battlesText: null, equipmentText });
-  assert.equal(r.pv, 1);
-  assert.deepEqual(r.px.A.p, piecesFromDay({ killsText, equipmentText }).A);
+  assert.equal(r.pv, 2);
+  assert.deepEqual(Object.fromEntries(Object.entries(r.px.A.p).map(([k, v]) => [k, usesOf(v)])), piecesFromDay({ killsText, equipmentText }).A);
   assert.deepEqual(compactExtras(r.px.A).p, [['T8_HEAD_CLOTH_SET1', 2], ['T8_ARMOR_PLATE_SET1@1', 3], ['T8_SHOES_CLOTH_SET1', 3], ['T6_CAPEITEM_FW_MARTLOCK@1', 2]]);
+  assert.deepEqual(compactExtras(r.px.A, true).p[0], ['T8_HEAD_CLOTH_SET1', 2, 2]);
   assert.equal(compactExtras(r.px.B)?.p, undefined); // arma sin tier completo: no cuenta
   const sum = mergeRollups([r, { px: { A: { m: [0, 0, 0, 0, 0, 0], h: [0, 0], w: {}, b: {}, l: [0, 0] } } }, r]); // día viejo sin p
-  assert.equal(sum.px.A.p['5|T6_CAPEITEM_FW_MARTLOCK@1'], 4);
+  assert.deepEqual(sum.px.A.p['5|T6_CAPEITEM_FW_MARTLOCK@1'], [4, 4]);
+  assert.equal(sum.gw, true); // el día viejo no tenía armas completas: no estorba
 });
 
 test('parte 59: una kill repetida en el archivo (mismo eventId) se cuenta UNA vez, también su equipo', () => {
@@ -201,4 +203,42 @@ test('parte 59: una kill repetida en el archivo (mismo eventId) se cuenta UNA ve
   assert.equal(r.guilds.Lobos[G.KILLS], 2);
   const pieces = piecesFromDay({ killsText: [k1, k1].join('\n'), equipmentText: [eq, eq].join('\n') });
   assert.equal(Object.values(pieces.Ana).reduce((a, b) => a + b, 0), 4); // casco, pecho, botas, capa: una vez cada uno
+});
+
+test('parte 65: victorias por arma, build y pieza en el mismo valor; top 5 de armas y armaduras', () => {
+  const NL = String.fromCharCode(10);
+  const kill = (id, killer, victim) => JSON.stringify({ eventId: id, killerName: killer, victimName: victim, participants: [] });
+  const set = (weapon, head = 'T8_HEAD_CLOTH_SET1') => [weapon, '', head, 'T8_ARMOR_PLATE_SET1@1', 'T8_SHOES_CLOTH_SET1', 'T6_CAPE@1', ''];
+  const killsText = [kill(1, 'A', 'B'), kill(2, 'A', 'C'), kill(3, 'D', 'A'), kill(4, 'A', 'E')].join(NL);
+  const equipmentText = [
+    JSON.stringify({ e: 1, k: set('T8_2H_CLAYMORE@3'), v: [] }),
+    JSON.stringify({ e: 2, k: set('T8_2H_CLAYMORE@3'), v: [] }),
+    JSON.stringify({ e: 3, k: set('T6_MAIN_SWORD'), v: set('T8_2H_CLAYMORE@3') }), // A muere con su build
+    JSON.stringify({ e: 4, k: set('T7_2H_DUALSWORD@1', 'T7_HEAD_LEATHER_SET2'), v: [] }),
+  ].join(NL);
+  const r = buildDayRollup({ killsText, battlesText: null, equipmentText });
+  const x = compactExtras(r.px.A, true);
+  assert.deepEqual(x.w, [['T8_2H_CLAYMORE@3', 3, 2], ['T7_2H_DUALSWORD@1', 1, 1]]);
+  assert.deepEqual(x.b[0], ['T8_2H_CLAYMORE@3||T8_HEAD_CLOTH_SET1|T8_ARMOR_PLATE_SET1@1|T8_SHOES_CLOTH_SET1', 3, 2]);
+  assert.deepEqual(x.p[0], ['T8_HEAD_CLOTH_SET1', 3, 2]);
+  // 5 armaduras: las 4 de p + el casco de cuero (distinto) → se publica `a`.
+  assert.equal(x.a.length, 5);
+  assert.deepEqual(x.a.find((e) => e[0] === 'T6_CAPE@1'), ['T6_CAPE@1', 4, 3]);
+  assert.deepEqual(x.a.find((e) => e[0] === 'T7_HEAD_LEATHER_SET2'), ['T7_HEAD_LEATHER_SET2', 1, 1]);
+  // Sin victorias conocidas: solo usos (nunca "ganó 0" inventado) y el víctima sin victorias = número.
+  assert.deepEqual(compactExtras(r.px.A).w[0], ['T8_2H_CLAYMORE@3', 3]);
+  assert.equal(compactExtras(r.px.D, true).w[0][2], 1);
+  // Si las 5 armaduras son las mismas 4 de p, `a` no se publica (no repetir bytes).
+  const solo = buildDayRollup({ killsText: kill(9, 'Z', 'Y'), battlesText: null, equipmentText: JSON.stringify({ e: 9, k: set('T8_2H_CLAYMORE@3'), v: [] }) });
+  assert.equal(compactExtras(solo.px.Z, true).a, undefined);
+  // El parche de días viejos da EXACTAMENTE el mismo equipo que un día hecho de cero.
+  const g = gearFromDay({ killsText, equipmentText });
+  for (const k of ['w', 'b', 'p']) assert.deepEqual(g.A[k], r.px.A[k], k);
+  // Ventana con un día viejo que tenía armas completas pero no victorias: no publica victorias.
+  const old = { pv: 1, px: { A: { m: [1, 0, 0, 0, 0, 0], h: [0, 1], w: { 'T8_2H_CLAYMORE@3': 5 }, b: {}, l: [0, 0], p: { '2|T8_HEAD_CLOTH_SET1': 5 } } } };
+  const sum = mergeRollups([r, old]);
+  assert.equal(sum.gw, false);
+  assert.deepEqual(sum.px.A.w['T8_2H_CLAYMORE@3'], [8, 2]);
+  assert.equal(mergeRollups([r]).gw, true);
+  assert.equal(mergeRollups([mergeRollups([r]), r]).gw, true); // acumulado + días nuevos
 });
