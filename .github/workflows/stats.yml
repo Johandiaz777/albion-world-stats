@@ -54,15 +54,19 @@ jobs:
           if [ -z "$MODE" ]; then
             HORA=$(date -u +%H)
             # Diario a la 01 UTC, o si la última corrida diaria dejó días por completar.
-            PEND=$(node -e "try{const s=require('./index/status.json');console.log(Object.values(s.regions||{}).some(r=>r.daysPending>0||r.nameIndexPending>0||r.pidsPending!==0)?1:0)}catch{console.log(1)}")
+            # Parte 89: si la última diaria falló (p. ej. sin memoria) el índice publicado queda viejo: se reintenta
+            # la próxima hora en vez de esperar a la 01 UTC del día siguiente.
+            PEND=$(node -e "try{const s=require('./index/status.json');const old=Date.now()-Date.parse(s.generatedAt)>26*3600e3;console.log(old||Object.values(s.regions||{}).some(r=>r.daysPending>0||r.nameIndexPending>0||r.pidsPending!==0)?1:0)}catch{console.log(1)}")
             if [ "$HORA" = "01" ] || [ "$PEND" = "1" ]; then MODE=daily; else MODE=hourly; fi
           fi
           echo "modo: $MODE"
           echo "MODE=$MODE" >> "$GITHUB_ENV"
           # Auditoría p60: solo se publica lo que terminó bien. Si una corrida muere a mitad de escribir
           # las partes, lo publicado sigue siendo la versión completa anterior (antes se subía a medias).
+          # Parte 89: la diaria de Américas pasó los 4 GB que Node usa por defecto (OOM desde el 07/10): 12 GB
+          # de los 16 del runner.
           if node build.mjs hourly; then touch .hourly-ok; else echo "::warning::hourly falló"; fi
-          if [ "$MODE" = "daily" ]; then if node build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
+          if [ "$MODE" = "daily" ]; then if node --max-old-space-size=12288 build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
       - name: Publicar
         run: |
           publicar_forzado() {
