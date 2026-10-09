@@ -283,12 +283,15 @@ async function daily(region) {
   //   - p (piezas) desde que hay equipo completo (29/09): baja kills + equipo y marca `pv`. Esos días
   //     entran en builtDates para que Todo y Temporada se rehagan UNA vez con las piezas.
   const recentDays = new Set(dateList(day(-29), yesterday));
+  // Auditoría p86 S1: un `pids` vacío es de una descarga que falló (antes se marcaba `{}` y el día no se
+  // completaba nunca); se reintenta como si faltara.
+  const lacksPids = (r) => !r.pids || !Object.keys(r.pids).length;
   const patchTodo = dateList(PIECES_FIRST_DAY, yesterday)
     .concat([...recentDays])
     .filter((d, i, all) => d >= FIRST_DAY && all.indexOf(d) === i)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return r && ((recentDays.has(d) && !r.pids) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION));
+      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION));
     })
     .sort()
     .reverse();
@@ -297,7 +300,7 @@ async function daily(region) {
     const r = readJson(rollupPath(d), null);
     const killsText = await fetchDayFile('kills', region, d, stats);
     const next = { ...r };
-    if (!r.pids) next.pids = killsText === null ? {} : pidsFromKills(killsText);
+    if (lacksPids(r) && killsText !== null) next.pids = pidsFromKills(killsText);
     if (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) {
       // Parte 65: el equipo del día con usos y victorias (w, b y p de la MISMA pasada, mismo criterio
       // que un día nuevo). Una sola vez por día: queda marcado `pv: 2`.
