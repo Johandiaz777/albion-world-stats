@@ -142,11 +142,13 @@ const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
  * `bestDay`: { jugador: [kills, muertes, daño] } — su mejor día de la ventana `w` (opcional).
  * `meta`: campos de cabecera de cada parte (`until` del índice, `date`/`yDate` de hoy). */
 function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
-  // Jugadores
-  const pRecs = {};
+  // Jugadores: agrupados por parte y escritos de a una (parte 90: antes se armaban los registros de
+  // TODOS los jugadores juntos y la diaria de Américas pasaba los 4 GB; ahora vive una parte por vez).
   const names = new Set();
   for (const w of Object.values(windows)) for (const n of Object.keys(w.players)) names.add(n);
-  for (const name of names) {
+  const namesByShard = Array.from({ length: PLAYER_SHARDS }, () => []);
+  for (const name of names) namesByShard[shardOf(name.toLowerCase(), PLAYER_SHARDS)].push(name);
+  const playerRec = (name) => {
     const rec = { n: name };
     let guild = '';
     for (const [key, w] of Object.entries(windows)) {
@@ -161,8 +163,8 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
     if (guild) rec.g = guild;
     const bd = rec.w ? bestDay?.[name] : undefined;
     if (bd && (bd[0] || bd[1] || bd[2])) rec.bd = bd;
-    if (Object.keys(rec).length > 2 || (Object.keys(rec).length === 2 && !rec.g)) pRecs[name.toLowerCase()] = rec;
-  }
+    return Object.keys(rec).length > 2 || (Object.keys(rec).length === 2 && !rec.g) ? rec : null;
+  };
   // Directorio de ids: UN id por jugador (el de la ventana más reciente), de todos los que se vieron,
   // aunque no tengan actividad en la ventana. Va aparte de las estadísticas: buscar un id baja ~3 KB.
   const ids = {};
@@ -197,7 +199,15 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
     fs.rmSync(path.join(dir, region, sub), { recursive: true, force: true });
     shards.forEach((part, i) => (bytes += writeJson(path.join(dir, region, sub, `${i}.json`), { v: 1, region, builtAt, ...meta, ...head, [field]: part })));
   };
-  write('players', spread(pRecs, PLAYER_SHARDS), 'players');
+  fs.rmSync(path.join(dir, region, 'players'), { recursive: true, force: true });
+  namesByShard.forEach((list, i) => {
+    const part = {};
+    for (const name of list) {
+      const rec = playerRec(name);
+      if (rec) part[name.toLowerCase()] = rec;
+    }
+    bytes += writeJson(path.join(dir, region, 'players', `${i}.json`), { v: 1, region, builtAt, ...meta, players: part });
+  });
   write('guilds', spread(gRecs, GUILD_SHARDS), 'guilds', gHead);
   write('ids', spread(ids, ID_SHARDS), 'ids');
   // Formato viejo (256/32 partes con el id dentro): sin testers todavía, ya no se publica (parte 59).
@@ -351,13 +361,15 @@ async function daily(region) {
   // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
   // el teléfono no baja 30 archivos de peleas de ~6 MB para dibujarla.
   const seriesDays = dateList(day(-29), yesterday);
-  const dayRollups = seriesDays.map((d) => readJson(rollupPath(d), null));
+  const seriesNames = Object.keys(windows.m.guilds);
   const seriesGuilds = {};
-  for (const name of Object.keys(windows.m.guilds)) {
-    seriesGuilds[name] = dayRollups.map((r) => {
-      const g = r?.guilds?.[name];
-      return g ? [g[0], g[1], g[2]] : [0, 0, 0];
-    });
+  for (const name of seriesNames) seriesGuilds[name] = [];
+  for (const d of seriesDays) {
+    const guilds = readJson(rollupPath(d), null)?.guilds;
+    for (const name of seriesNames) {
+      const g = guilds?.[name];
+      seriesGuilds[name].push(g ? [g[0], g[1], g[2]] : [0, 0, 0]);
+    }
   }
   const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups), {
     until: yesterday,
