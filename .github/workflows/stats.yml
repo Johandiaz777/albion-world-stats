@@ -36,8 +36,8 @@ jobs:
           [ "$s" -le 0 ] && s=$(( s + 3600 ))
           echo "espera $s s"
           sleep "$s"
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
       - run: npm test
@@ -48,8 +48,12 @@ jobs:
             if git clone -q --depth 1 -b "$b" "$REPO_URL" "$b" 2>/dev/null; then :; else mkdir -p "$b" && git -C "$b" init -q -b "$b"; fi
           done
       - name: Construir
+        # Auditoría p92 H6: la entrada del dispatch va por env (una expresión dentro de run: se pega en el
+        # script ANTES de que corra bash: "daily\"; comando" se ejecutaba).
+        env:
+          MODE_INPUT: ${{ github.event.inputs.mode }}
         run: |
-          MODE="${{ github.event.inputs.mode }}"
+          MODE="$MODE_INPUT"
           [ "$MODE" = "auto" ] && MODE=""
           if [ -z "$MODE" ]; then
             HORA=$(date -u +%H)
@@ -86,5 +90,8 @@ jobs:
       # corrida haya fallado (la siguiente vuelve a intentar).
       - name: Encadenar la próxima hora
         if: always()
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -sf -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/workflows/stats.yml/dispatches" -d '{"ref":"${{ github.ref_name }}","inputs":{"mode":"auto"}}' || echo "::warning::no se pudo encadenar (queda el cron)"
+          curl -sf -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/stats.yml/dispatches" -d "{\"ref\":\"$REF_NAME\",\"inputs\":{\"mode\":\"auto\"}}" || echo "::warning::no se pudo encadenar (queda el cron)"

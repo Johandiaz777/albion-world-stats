@@ -346,11 +346,18 @@ async function daily(region) {
       loadDays,
       dateList,
     });
-    writeJson(file, acc);
+    // Auditoría Muse p92 H4: el acumulado crece con los jugadores DISTINTOS vistos (no con los días) y nada lo
+    // poda; se registra cuánto pesa y a cuántos cubre para ver venir un OOM con datos (decidir el tope con la serie).
+    accSize[key] = {
+      bytes: writeJson(file, acc),
+      players: Object.keys(data?.players ?? {}).length,
+      guilds: Object.keys(data?.guilds ?? {}).length,
+    };
     accRebuilt[key] = rebuilt;
     return data;
   };
   const accRebuilt = {};
+  const accSize = {};
   const windows = {
     w: mergeRollups(weekRollups), // 6 cerrados + hoy = 7 días
     m: mergeRollups(load(range(29))), // 29 cerrados + hoy = 30 días
@@ -417,6 +424,9 @@ async function daily(region) {
     nameIndexBytes,
     daysWithoutFiles: empty,
     accRebuilt,
+    accSize,
+    // Pico real de memoria del proceso hasta acá (MB): con 12 GB de tope en la diaria (parte 89).
+    maxRssMB: Math.round(process.resourceUsage().maxRSS / 1024),
     ...out,
     downloadedMB: Math.round(stats.bytes / 1e5) / 10,
     retries: stats.retries,
