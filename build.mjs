@@ -34,7 +34,7 @@ import {
 } from './lib/name-index.mjs';
 
 import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
-import { dateList, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
+import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -117,8 +117,12 @@ const hasNameIndex = (base, kind, date) => readJson(path.join(base, kind.dir, da
 async function indexDay(base, region, date, stats, texts = {}, only = KINDS) {
   let bytes = 0;
   for (const kind of only) {
-    const text = texts[kind.type] !== undefined ? texts[kind.type] : await fetchDayFile(kind.type, region, date, stats);
+    let text = texts[kind.type] !== undefined ? texts[kind.type] : await fetchDayFile(kind.type, region, date, stats);
     if (text === null) continue; // ese día no tiene archivo: sin índice, la app usa el método de siempre
+    // Parte 136: si el día tiene partes `.2`, `.3`..., el índice se arma solo con el archivo de siempre: guarda
+    // posiciones dentro de ESE archivo (la app pide esos bytes a esa dirección).
+    const baseLen = dayFileBaseBytes(kind.type, region, date);
+    if (baseLen !== undefined) text = Buffer.from(text, 'utf8').subarray(0, baseLen).toString('utf8');
     const index = buildNameIndex(text, kind.namesOf, kind.shards);
     bytes += writeNameIndex(writeJson, path.join(base, kind.dir), region, date, index, dayFileSource(kind.type, region, date));
   }
