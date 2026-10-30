@@ -135,5 +135,11 @@ jobs:
         env:
           REF_NAME: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Parte 137: el 30/10 a las 14:21 UTC GitHub devolvió 500 al push y al dispatch a la vez; sin reintento la cadena
+        # se cortó y el cron de respaldo de las 15:20 no llegó. Se reintenta 5 veces con espera creciente.
         run: |
-          curl -sf -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/stats.yml/dispatches" -d "{\"ref\":\"$REF_NAME\",\"inputs\":{\"mode\":\"auto\"}}" || echo "::warning::no se pudo encadenar (queda el cron)"
+          for i in 1 2 3 4 5; do
+            if curl -sf -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/stats.yml/dispatches" -d "{\"ref\":\"$REF_NAME\",\"inputs\":{\"mode\":\"auto\"}}"; then exit 0; fi
+            echo "dispatch falló (intento $i), reintento en $((i * 20)) s"; sleep $((i * 20))
+          done
+          echo "::warning::no se pudo encadenar (queda el cron)"
