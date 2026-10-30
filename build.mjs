@@ -35,7 +35,7 @@ import {
 
 import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
-import { readJson, writeJson } from './lib/store.mjs';
+import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REGIONS = ['europe', 'americas', 'asia'];
@@ -337,8 +337,13 @@ async function daily(region) {
   // se reescribe con un solo commit) en vez de cargar todos los días en memoria (ver advanceAccumulator).
   const loadDays = (dates) => dates.map((d) => readJson(rollupPath(d), null)).filter(Boolean);
   const accumulated = (key, from) => {
+    // Parte 136: en partes (`readJsonParts`/`writeJsonParts`, ver lib/store.mjs): el de un solo archivo iba a
+    // pasar el tope de texto de V8 y los 100 MiB de GitHub. Si todavía no hay partes, se lee el archivo viejo.
     const file = path.join(here, 'index', region, '_acc', `${key}.json.gz`);
-    const { data, acc, rebuilt } = advanceAccumulator(readJson(file, null), {
+    const partsBase = path.join(here, 'index', region, '_acc', key);
+    const parts = readJsonParts(partsBase, null, (m) => console.warn(`[${region}] ${m}`));
+    const prev = parts === undefined ? readJson(file, null) : parts && { ...parts.head, data: parts.data };
+    const { data, acc, rebuilt } = advanceAccumulator(prev, {
       from,
       until: yesterday,
       rollupVersion: ROLLUP_VERSION,
@@ -348,8 +353,12 @@ async function daily(region) {
     });
     // Auditoría Muse p92 H4: el acumulado crece con los jugadores DISTINTOS vistos (no con los días) y nada lo
     // poda; se registra cuánto pesa y a cuántos cubre para ver venir un OOM con datos (decidir el tope con la serie).
+    const { data: accData, ...accHead } = acc;
+    const written = writeJsonParts(partsBase, accHead, accData, { legacyFile: file });
     accSize[key] = {
-      bytes: writeJson(file, acc),
+      bytes: written.bytes,
+      parts: written.parts,
+      maxPartBytes: written.maxPartBytes,
       players: Object.keys(data?.players ?? {}).length,
       guilds: Object.keys(data?.guilds ?? {}).length,
     };

@@ -108,6 +108,13 @@ jobs:
           if [ "$MODE" = "daily" ]; then if node --max-old-space-size=12288 build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
       - name: Publicar
         run: |
+          # Parte 136: GitHub rechaza archivos de más de 100 MiB (y avisa desde 50). Aviso temprano a los 80 MB para
+          # verlo venir antes de que un push falle (el acumulado `_acc` ya va en partes de ~8 MB, ver lib/store.mjs).
+          for d in today index rollups; do
+            [ -d "$d" ] || continue
+            GRANDES=$(find "$d" -path "$d/.git" -prune -o -type f -size +80M -print | head -3 | tr '\n' ' ')
+            [ -n "$GRANDES" ] && echo "::warning::archivos de más de 80 MB en $d: $GRANDES"
+          done
           publicar_forzado() {
             if grep -rlI -e '^<<<<<<< ' -e '^>>>>>>> ' "$1" --exclude-dir=.git >/dev/null 2>&1; then echo "::error::conflicto en $1"; return 0; fi
             ( cd "$1" && rm -rf .git && git init -q -b "$1" && git config user.name stats && git config user.email stats@users.noreply.github.com \
