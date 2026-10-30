@@ -82,6 +82,13 @@ jobs:
             rm -rf "$b"
             if git clone -q --depth 1 -b "$b" "$REPO_URL" "$b" 2>/dev/null; then :; else mkdir -p "$b" && git -C "$b" init -q -b "$b"; fi
           done
+          # Parte 137: Meta Armory desde el escáner. `metastate` (estado y días que todavía cambian) y la rama `meta`
+          # (lo que leen la app y la función; carpeta local `metapub`). Si no existen todavía, se empieza de cero.
+          for par in metastate:metastate meta:metapub; do
+            b=${par%%:*}; d=${par##*:}
+            rm -rf "$d"
+            if git clone -q --depth 1 -b "$b" "$REPO_URL" "$d" 2>/dev/null; then :; else mkdir -p "$d" && git -C "$d" init -q -b "$b"; fi
+          done
       - name: Construir
         # Auditoría p92 H6: la entrada del dispatch va por env (una expresión dentro de run: se pega en el
         # script ANTES de que corra bash: "daily\"; comando" se ejecutaba).
@@ -105,12 +112,15 @@ jobs:
           # Parte 89: la diaria de Américas pasó los 4 GB que Node usa por defecto (OOM desde el 07/10): 12 GB
           # de los 16 del runner.
           if node build.mjs hourly; then touch .hourly-ok; else echo "::warning::hourly falló"; fi
+          # Parte 137: Meta Armory desde el escáner (lee solo lo nuevo; ~10-60 s; la primera vez completa desde el 29/09
+          # de a 4 días por corrida, con tope de 500 MB por región). Va antes de la diaria para no esperarla.
+          if node --max-old-space-size=4096 build.mjs meta; then touch .meta-ok; else echo "::warning::meta falló"; fi
           if [ "$MODE" = "daily" ]; then if node --max-old-space-size=12288 build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
       - name: Publicar
         run: |
           # Parte 136: GitHub rechaza archivos de más de 100 MiB (y avisa desde 50). Aviso temprano a los 80 MB para
           # verlo venir antes de que un push falle (el acumulado `_acc` ya va en partes de ~8 MB, ver lib/store.mjs).
-          for d in today index rollups; do
+          for d in today index rollups metastate metapub; do
             [ -d "$d" ] || continue
             GRANDES=$(find "$d" -path "$d/.git" -prune -o -type f -size +80M -print | head -3 | tr '\n' ' ')
             [ -n "$GRANDES" ] && echo "::warning::archivos de más de 80 MB en $d: $GRANDES"
@@ -120,6 +130,17 @@ jobs:
             ( cd "$1" && rm -rf .git && git init -q -b "$1" && git config user.name stats && git config user.email stats@users.noreply.github.com \
               && git add -A && git commit -q -m "$1 $(date -u +%FT%TZ)" && git push -q -f "$REPO_URL" "$1" ) || echo "::warning::push de $1 falló"
           }
+          # Parte 137: como publicar_forzado (un solo commit, sin historia), pero dentro del clon: así git sabe qué tiene
+          # ya GitHub y sube solo los archivos que cambiaron (no la rama entera cada hora). Rama = $2, carpeta = $1.
+          publicar_orfano() {
+            if grep -rlI -e '^<<<<<<< ' -e '^>>>>>>> ' "$1" --exclude-dir=.git >/dev/null 2>&1; then echo "::error::conflicto en $1"; return 0; fi
+            ( cd "$1" && git config user.name stats && git config user.email stats@users.noreply.github.com \
+              && git checkout -q --orphan "publicar-$GITHUB_RUN_ID" && git add -A && git commit -q -m "$2 $(date -u +%FT%TZ)" \
+              && git push -q -f "$REPO_URL" "HEAD:refs/heads/$2" ) || echo "::warning::push de $2 falló"
+          }
+          # Meta: primero el estado, después lo publicado. Si uno de los dos falla, la corrida siguiente lo rehace (los ids
+          # por día evitan contar dos veces; un día final se reescribe desde metastate hasta verlo en rollups).
+          if [ -f .meta-ok ]; then publicar_orfano metastate metastate; publicar_orfano metapub meta; else echo "::warning::meta sin publicar"; fi
           if [ -f .hourly-ok ]; then publicar_forzado today; else echo "::warning::today sin publicar (hourly no terminó)"; fi
           # El índice (~100 MB) solo cambia en la corrida diaria: no se re-sube cada hora.
           if [ "$MODE" = "daily" ] && [ -f .daily-ok ] && [ -f index/status.json ]; then publicar_forzado index; fi

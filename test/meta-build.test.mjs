@@ -348,3 +348,44 @@ test('primera corrida: tope de bytes; lo que falta se lee en la siguiente sin pe
   assert.equal(strip(store.readDay(D).rollup), strip(oneShot([f, f1], D)));
   assert.equal(strip(store.readDay(D1).rollup), strip(oneShot([f1], D1)));
 });
+
+test('build.mjs meta (runMeta): escribe lo que publica la rama meta, con «Todos» solo si salieron las 3 regiones', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { runMeta } = await import('../lib/meta-run.mjs');
+  const { candidateUrls } = await import('../lib/sources.mjs');
+  const D = '2026-10-20';
+  const srv = fakeServer();
+  let seed = 40;
+  for (const region of ['europe', 'americas', 'asia']) {
+    const f = makeDay(D, 150, seed++);
+    srv.files.set(candidateUrls('kills', region, D)[0], f.kills);
+    srv.files.set(candidateUrls('equipment', region, D)[0], f.equipment);
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'meta-run-'));
+  const logs = [];
+  const now = new Date(`${D}T15:00:00Z`);
+  let code = await runMeta({ root, now, fetchImpl: srv.fetchImpl, log: (m) => logs.push(m) });
+  assert.equal(code, 0, logs.join('\n'));
+  const readPub = (rel) => JSON.parse(fs.readFileSync(path.join(root, 'metapub', rel), 'utf8'));
+  for (const region of ['europe', 'americas', 'asia', 'all']) {
+    const doc = readPub(`armory/${region}.json`);
+    assert.equal(doc.dayKey, D);
+    assert.equal(doc.day.samples, region === 'all' ? 450 : 150);
+    assert.equal(readPub(`meta-detail/${region}/week.json`).window, 'week');
+  }
+  assert.equal(readPub('armory/all.json').all.samples, 450);
+  assert.ok(readPub('versus/europe.json').windows.week.sampleKills > 0);
+  const status = readPub('status.json');
+  assert.equal(status.regions.asia.ok, true);
+  assert.equal(status.all.ok, true);
+  assert.ok(fs.readdirSync(path.join(root, 'metapub', 'meta-recent', 'europe')).length > 0);
+  // Una región caída: las otras se publican, «Todos» queda como estaba y el estado lo dice.
+  srv.opts.fail = { has: (url) => url.includes('albion-data-asia') };
+  const realFetch = srv.fetchImpl;
+  code = await runMeta({ root, now, fetchImpl: async (url, init) => (url.includes('albion-data-asia') ? { status: 500, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) } : realFetch(url, init)), log: (m) => logs.push(m) });
+  assert.equal(code, 0);
+  assert.equal(readPub('status.json').regions.asia.ok, true, 'un 500 de raw es un error de archivo: la región sigue y reintenta');
+  fs.rmSync(root, { recursive: true, force: true });
+});

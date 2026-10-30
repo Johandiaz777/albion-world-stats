@@ -3,3 +3,5 @@ index/
 today/
 node_modules/
 *.tmp
+metastate/
+metapub/

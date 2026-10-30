@@ -52,6 +52,13 @@ const MAX_BACKFILL_DAYS = 25; // días cerrados nuevos por región y corrida (el
 const PIECES_FIRST_DAY = '2026-09-29';
 
 const args = process.argv.slice(2);
+// Parte 137: `node build.mjs meta` = Meta Armory desde el escáner (lib/meta-run.mjs). Va aparte: no usa la temporada
+// ni las carpetas `today`/`index`.
+if (args[0] === 'meta') {
+  const { runMeta, META_REGIONS } = await import('./lib/meta-run.mjs');
+  const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : META_REGIONS;
+  process.exit(await runMeta({ root: here, regions: only }));
+}
 const mode = args[0] === 'daily' ? 'daily' : 'hourly';
 const argValue = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const regions = argValue('--region') ? [argValue('--region')] : REGIONS;
