@@ -13,7 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'hourly, daily o auto (espera al minuto 20 y decide como el cron)'
+        # Parte 138: `rankings-prueba` = solo Rankings, publica en la rama `rankings-prueba` y NO toca las ramas de
+        # producción ni encadena la hora siguiente (para probar una rama con workflow_dispatch sin molestar a main).
+        description: 'hourly, daily, auto (espera al minuto 20 y decide como el cron) o rankings-prueba'
         default: 'daily'
 # Parte 127: la `concurrency` va en el trabajo `build`, no en todo el workflow. Así la corrida del cron de respaldo
 # arranca enseguida, la guardia ve si ya hay una corriendo y, si la hay, el trabajo se salta (queda «correcta» en
@@ -53,7 +55,9 @@ jobs:
     # este trabajo. Si la guardia falla, `ocupado` queda vacío y se corre igual (como antes).
     if: ${{ always() && (github.event_name != 'schedule' || needs.guardia.outputs.ocupado != 'true') }}
     concurrency:
-      group: stats
+      # Parte 138: la prueba (`rankings-prueba`) va en su propio grupo: no publica nada de producción, y en el grupo
+      # `stats` la cancelaría la corrida que la cadena deja en espera.
+      group: ${{ github.event.inputs.mode == 'rankings-prueba' && 'stats-prueba' || 'stats' }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     # Hasta 59 min esperando el minuto 20 (mode auto) + la construcción.
@@ -77,6 +81,8 @@ jobs:
           node-version: 22
       - run: npm test
       - name: Traer lo publicado
+        env:
+          MODE_INPUT: ${{ github.event.inputs.mode }}
         run: |
           for b in rollups index today; do
             rm -rf "$b"
@@ -84,11 +90,24 @@ jobs:
           done
           # Parte 137: Meta Armory desde el escáner. `metastate` (estado y días que todavía cambian) y la rama `meta`
           # (lo que leen la app y la función; carpeta local `metapub`). Si no existen todavía, se empieza de cero.
-          for par in metastate:metastate meta:metapub; do
+          # Parte 138: Rankings desde el escáner, rama `rankings` (carpeta local `rankingspub`; en la prueba, `rankings-prueba`).
+          RANKINGS_BRANCH=rankings
+          [ "$MODE_INPUT" = "rankings-prueba" ] && RANKINGS_BRANCH=rankings-prueba
+          echo "RANKINGS_BRANCH=$RANKINGS_BRANCH" >> "$GITHUB_ENV"
+          for par in metastate:metastate meta:metapub $RANKINGS_BRANCH:rankingspub; do
             b=${par%%:*}; d=${par##*:}
             rm -rf "$d"
             if git clone -q --depth 1 -b "$b" "$REPO_URL" "$d" 2>/dev/null; then :; else mkdir -p "$d" && git -C "$d" init -q -b "$b"; fi
           done
+      # Parte 138: copia local de los 8 últimos días crudos del escáner (kills y peleas, ~0,9 GB sin comprimir) para
+      # Rankings. Se restaura la más nueva (`rawcache-<id de corrida>`) y solo se baja lo nuevo de cada archivo
+      # (`Range`). Si no hay (primera vez, o 7 días sin usarse), se baja entera: el resultado es el mismo.
+      - name: Restaurar la copia del escáner (Rankings)
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: rawcache
+          key: rawcache-${{ github.run_id }}
+          restore-keys: rawcache-
       - name: Construir
         # Auditoría p92 H6: la entrada del dispatch va por env (una expresión dentro de run: se pega en el
         # script ANTES de que corra bash: "daily\"; comando" se ejecutaba).
@@ -97,6 +116,11 @@ jobs:
         run: |
           MODE="$MODE_INPUT"
           [ "$MODE" = "auto" ] && MODE=""
+          if [ "$MODE" = "rankings-prueba" ]; then
+            echo "MODE=$MODE" >> "$GITHUB_ENV"
+            if node --max-old-space-size=8192 build.mjs rankings; then touch .rankings-ok; else echo "::warning::rankings falló"; fi
+            exit 0
+          fi
           if [ -z "$MODE" ]; then
             HORA=$(date -u +%H)
             # Diario a la 01 UTC, o si la última corrida diaria dejó días por completar.
@@ -115,12 +139,15 @@ jobs:
           # Parte 137: Meta Armory desde el escáner (lee solo lo nuevo; ~10-60 s; la primera vez completa desde el 29/09
           # de a 4 días por corrida, con tope de 500 MB por región). Va antes de la diaria para no esperarla.
           if node --max-old-space-size=4096 build.mjs meta; then touch .meta-ok; else echo "::warning::meta falló"; fi
+          # Parte 138: Rankings de kills con el acumulador de las funciones sobre la copia local (~1-2 min; la función
+          # `refreshCraftingLeaderboards` los copia a las HH:40 si appConfig/rankingsSource = repos).
+          if node --max-old-space-size=8192 build.mjs rankings; then touch .rankings-ok; else echo "::warning::rankings falló"; fi
           if [ "$MODE" = "daily" ]; then if node --max-old-space-size=12288 build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
       - name: Publicar
         run: |
           # Parte 136: GitHub rechaza archivos de más de 100 MiB (y avisa desde 50). Aviso temprano a los 80 MB para
           # verlo venir antes de que un push falle (el acumulado `_acc` ya va en partes de ~8 MB, ver lib/store.mjs).
-          for d in today index rollups metastate metapub; do
+          for d in today index rollups metastate metapub rankingspub; do
             [ -d "$d" ] || continue
             GRANDES=$(find "$d" -path "$d/.git" -prune -o -type f -size +80M -print | head -3 | tr '\n' ' ')
             [ -n "$GRANDES" ] && echo "::warning::archivos de más de 80 MB en $d: $GRANDES"
@@ -138,6 +165,10 @@ jobs:
               && git checkout -q --orphan "publicar-$GITHUB_RUN_ID" && git add -A && git commit -q -m "$2 $(date -u +%FT%TZ)" \
               && git push -q -f "$REPO_URL" "HEAD:refs/heads/$2" ) || echo "::warning::push de $2 falló"
           }
+          # Parte 138: Rankings (una rama propia: si Meta falla, Rankings se publica igual, y al revés).
+          if [ -f .rankings-ok ]; then publicar_orfano rankingspub "$RANKINGS_BRANCH"; else echo "::warning::rankings sin publicar"; fi
+          # La prueba no publica nada más.
+          if [ "$MODE" = "rankings-prueba" ]; then exit 0; fi
           # Meta: primero el estado, después lo publicado. Si uno de los dos falla, la corrida siguiente lo rehace (los ids
           # por día evitan contar dos veces; un día final se reescribe desde metastate hasta verlo en rollups).
           if [ -f .meta-ok ]; then publicar_orfano metastate metastate; publicar_orfano metapub meta; else echo "::warning::meta sin publicar"; fi
@@ -149,10 +180,29 @@ jobs:
             git -C rollups add -A && git -C rollups commit -q -m "rollups $(date -u +%F)" && git -C rollups push -q "$REPO_URL" HEAD:rollups || echo "::warning::push de rollups falló"
           fi
 
+      # Parte 138: se guarda la copia nueva y se borran las anteriores (cada una pesa ~150-200 MB comprimida; el tope
+      # del repo es 10 GB). `always()`: aunque Rankings falle, lo bajado sirve para la próxima.
+      - name: Guardar la copia del escáner (Rankings)
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: rawcache
+          key: rawcache-${{ github.run_id }}
+      - name: Borrar copias viejas del escáner
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP: rawcache-${{ github.run_id }}
+          REF: ${{ github.ref }}
+        run: |
+          du -sh rawcache 2>/dev/null || true
+          gh cache list -R "$GITHUB_REPOSITORY" --key rawcache- --ref "$REF" --limit 100 --json id,key,sizeInBytes             --jq ".[] | select(.key != \"$KEEP\") | .id" | while read -r id; do gh cache delete -R "$GITHUB_REPOSITORY" "$id" || true; done
+          gh cache list -R "$GITHUB_REPOSITORY" --key rawcache- --json key,sizeInBytes,ref || true
+
       # Encadena la próxima hora sin depender del cron. `always()`: la cadena no se corta aunque esta
       # corrida haya fallado (la siguiente vuelve a intentar).
       - name: Encadenar la próxima hora
-        if: always()
+        if: ${{ always() && github.event.inputs.mode != 'rankings-prueba' }}
         env:
           REF_NAME: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
