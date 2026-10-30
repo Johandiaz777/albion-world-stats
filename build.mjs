@@ -59,6 +59,13 @@ if (args[0] === 'meta') {
   const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : META_REGIONS;
   process.exit(await runMeta({ root: here, regions: only }));
 }
+// Parte 138: `node build.mjs rankings` = Rankings de kills con el acumulador de las funciones (lib/rankings-run.mjs).
+if (args[0] === 'rankings') {
+  const { runRankings, RANKINGS_REGIONS } = await import('./lib/rankings-run.mjs');
+  const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : RANKINGS_REGIONS;
+  const at = args.includes('--now') ? new Date(args[args.indexOf('--now') + 1]) : new Date();
+  process.exit(await runRankings({ root: here, regions: only, now: at }));
+}
 const mode = args[0] === 'daily' ? 'daily' : 'hourly';
 const argValue = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const regions = argValue('--region') ? [argValue('--region')] : REGIONS;
