@@ -197,6 +197,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       if (w.guilds[name]) rec[key] = w.guilds[name];
       const members = topMembers(w.gm?.[name]);
       if (members.length) rec["x" + key] = members;
+      if (w.gx?.[name]) rec["z" + key] = w.gx[name];
     }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
     if (series?.guilds[name]) rec.sm = series.guilds[name];

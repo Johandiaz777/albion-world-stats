@@ -265,3 +265,13 @@ test('chat 160: con el grupo del asesino la kill no es solo, igual que «1 vs 1�
   assert.equal(buildDayRollup({ killsText: k({ groupSize: 3 }), battlesText: '', equipmentText: '' }).px.A.m[1], 1);
   assert.equal(buildDayRollup({ killsText: k({ groupSize: 1 }), battlesText: '', equipmentText: '' }).px.A.m[0], 1);
 });
+
+test('chat 160: cómo pelea un gremio, solo / grupo / ZvZ, y sus peleas ZvZ', () => {
+  const big = (n) => JSON.stringify({ eventId: n, battleId: 7, killerName: `A${n}`, killerGuild: 'Lobos', victimName: `V${n}`, victimGuild: 'Zorros', totalFame: 10, participantsCount: 1, participants: [] });
+  const solo = JSON.stringify({ eventId: 99, battleId: 8, killerName: 'S', killerGuild: 'Lobos', victimName: 'T', victimGuild: 'Zorros', totalFame: 10, participantsCount: 1, participants: [] });
+  const killsText = [...Array.from({ length: 12 }, (_, i) => big(i + 1)), solo].join('\n');
+  const day = buildDayRollup({ killsText, battlesText: '', equipmentText: '' });
+  assert.deepEqual(day.gx.Lobos, [1, 0, 12, 0, 0, 0, 1, 1, 0]);
+  assert.deepEqual(day.gx.Zorros, [0, 0, 0, 1, 0, 12, 1, 0, 1]);
+  assert.deepEqual(mergeRollups([day, day]).gx.Lobos, [2, 0, 24, 0, 0, 0, 2, 2, 0]);
+});
