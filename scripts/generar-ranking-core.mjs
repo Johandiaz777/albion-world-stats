@@ -11,6 +11,7 @@
 //    (`createCombatRankingsAccumulator`);
 //  - leaderboard-season.ts: `countAssists`;
 //  - index.ts: `forEachNdjsonRow` (cómo se leen las líneas: una rota se salta);
+//  - battle-tally.ts entero (las peleas medidas desde sus kills);
 //  - las constantes `RANKING_TOP_N` (ranking-top.ts) y `GLOBAL_SCORE_TOP_N` (index.ts), por su valor.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -32,6 +33,7 @@ const read = (f) => fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, 
 const index = read('index.ts');
 const season = read('leaderboard-season.ts');
 const top = read('ranking-top.ts');
+const tally = read('battle-tally.ts');
 
 function slice(text, from, to, name) {
   const a = text.indexOf(from);
@@ -40,6 +42,7 @@ function slice(text, from, to, name) {
   return text.slice(a, b);
 }
 const parts = [
+  tally.slice(tally.indexOf('export const MIN_BATTLE_KILLS')),
   slice(index, 'export type ServerStoredKill', 'function lastNDatesUTC', 'tipos y umbrales'),
   slice(season, 'export function countAssists', 'const TOP_FAME_KILLS_N', 'countAssists'),
   slice(index, 'export function aggregateCombatRankings', 'async function fetchCraftingFame', 'acumulador'),
@@ -54,7 +57,7 @@ const out = ts.transpileModule(pure, { compilerOptions: { target: ts.ScriptTarge
 const sha = crypto.createHash('sha256').update(`${topN}|${globalN}|${pure}`).digest('hex').slice(0, 16);
 const header = [
   '// GENERADO por scripts/generar-ranking-core.mjs: NO editar a mano.',
-  `// Fuente: functions/src/index.ts + leaderboard-season.ts (repo Albion World), sha256 ${sha}.`,
+  `// Fuente: functions/src/index.ts + leaderboard-season.ts + battle-tally.ts (repo Albion World), sha256 ${sha}.`,
   '// Es el mismo acumulador que usa `refreshCraftingLeaderboards`, sin los tipos.',
   `const LEADERBOARD_TOP_N = ${topN};`,
   `const GLOBAL_SCORE_TOP_N = ${globalN};`,

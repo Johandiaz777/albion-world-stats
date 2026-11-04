@@ -88,7 +88,7 @@ test('v2: solo / grupo / ZvZ, healer, arma y build completas, botín y miembros 
     line({ e: 2, k: ['T8_2H_CLAYMORE@3', '', 'T8_HEAD_PLATE_SET1@2', 'T8_ARMOR_PLATE_SET1', 'T8_SHOES_PLATE_SET1', 'CAPE', 'HORSE'], v: [''] }),
   ].join('\n');
   const r = buildDayRollup({ killsText, battlesText: '', equipmentText });
-  assert.equal(r.v, 2);
+  assert.equal(r.v, 3);
   assert.deepEqual(r.px.Ana.m, [1, 1, 1, 0, 0, 0]);
   assert.deepEqual(r.px.Beto.m, [0, 0, 0, 1, 0, 0]);
   assert.deepEqual(r.px.Dani.h, [1, 1]);
@@ -241,4 +241,27 @@ test('parte 65: victorias por arma, build y pieza en el mismo valor; top 5 de ar
   assert.deepEqual(sum.px.A.w['T8_2H_CLAYMORE@3'], [8, 2]);
   assert.equal(mergeRollups([r]).gw, true);
   assert.equal(mergeRollups([mergeRollups([r]), r]).gw, true); // acumulado + días nuevos
+});
+
+test('chat 160: las peleas que el archivo no trae salen de las kills', () => {
+  const line = (n, over = {}) => JSON.stringify({ eventId: n, battleId: 7, killerName: `A${n}`, killerGuild: 'Lobos', victimName: `V${n}`, victimGuild: 'Zorros', totalFame: 10, participantsCount: 1, participants: [], ...over });
+  const killsText = Array.from({ length: 12 }, (_, i) => line(i + 1)).join('\n');
+  const r = buildDayRollup({ killsText, battlesText: '', equipmentText: '' });
+  assert.deepEqual(r.guilds.Lobos.slice(4), [1, 1, 0]);
+  assert.deepEqual(r.guilds.Zorros.slice(4), [1, 0, 1]);
+  assert.deepEqual(r.rivals['Lobos\u0001Zorros'], [1, 1, 0]);
+  assert.equal(r.px.A1.m[2], 1, '24 personas en la pelea: ZvZ');
+});
+
+test('chat 160: una pelea de 2 kills no cuenta como pelea, y la del archivo no se repite', () => {
+  const k = (n, battleId) => JSON.stringify({ eventId: n, battleId, killerName: 'A', killerGuild: 'Lobos', victimName: `V${n}`, victimGuild: 'Zorros', totalFame: 10, participantsCount: 1, participants: [] });
+  const battlesText = JSON.stringify({ battleId: 8, guilds: [{ name: 'Lobos', kills: 3, deaths: 0 }], players: [{}, {}, {}, {}] });
+  const r = buildDayRollup({ killsText: [k(1, 7), k(2, 7), k(3, 8), k(4, 8), k(5, 8)].join('\n'), battlesText, equipmentText: '' });
+  assert.equal(r.guilds.Lobos[4], 1);
+});
+
+test('chat 160: con el grupo del asesino la kill no es solo, igual que «1 vs 1» en Rankings', () => {
+  const k = (over) => JSON.stringify({ eventId: 1, battleId: 7, killerName: 'A', victimName: 'V', totalFame: 10, participantsCount: 1, participants: [], ...over });
+  assert.equal(buildDayRollup({ killsText: k({ groupSize: 3 }), battlesText: '', equipmentText: '' }).px.A.m[1], 1);
+  assert.equal(buildDayRollup({ killsText: k({ groupSize: 1 }), battlesText: '', equipmentText: '' }).px.A.m[0], 1);
 });
