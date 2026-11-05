@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { dayOutcome, lootWindows, rollupVersionFor, shardFights, buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
+import { dayOutcome, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
 
 const kill = (killer, kg, victim, vg, fame, parts = []) =>
   JSON.stringify({ killerName: killer, killerGuild: kg, victimName: victim, victimGuild: vg, totalFame: fame, participants: parts });
@@ -283,10 +283,12 @@ test('chat 166: botín y pérdida de un gremio por tamaño de pelea, con la cuen
   const eq = (e, ve, vi) => JSON.stringify({ e, k: [], v: [], ve, vi });
   const equipmentText = [eq(1, 1000, 500), eq(2, 2000, 0), eq(99, 700, 0)].join('\n');
   const day = buildDayRollup({ killsText, battlesText: '', equipmentText });
-  assert.deepEqual(day.gl.Lobos, [700, 0, 3500, 0, 0, 0]);
-  assert.deepEqual(day.gl.Zorros, [0, 0, 0, 700, 0, 3500]);
+  assert.deepEqual(day.gl.Lobos, [700, 0, 3500, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(day.gl.Zorros, [0, 0, 0, 700, 0, 3500, 1, 0, 2], 'muere 13 veces, pero solo 3 con plata registrada');
+  assert.deepEqual(publishGuildLoot(day.gl.Zorros), [0, 0, 0, 1, 0, 4, 1, 0, 2], 'plata en miles, muertes tal cual');
   assert.equal(day.px.A1.l[0], 1500, 'el gremio suma lo mismo que el jugador');
-  assert.deepEqual(mergeRollups([day, day]).gl.Lobos, [1400, 0, 7000, 0, 0, 0]);
+  assert.deepEqual(mergeRollups([day, day]).gl.Lobos, [1400, 0, 7000, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(mergeRollups([day, day]).gl.Zorros, [0, 0, 0, 1400, 0, 7000, 2, 0, 4]);
 });
 
 test('chat 166: la plata de cada pelea, en miles y solo de peleas de 3+ kills', () => {

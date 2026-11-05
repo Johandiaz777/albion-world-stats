@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, lootWindows, rollupVersionFor, shardFights, thousands, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 
@@ -203,7 +203,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       const members = topMembers(w.gm?.[name]);
       if (members.length) rec["x" + key] = members;
       if (w.gx?.[name]) rec["z" + key] = w.gx[name];
-      if (hasLoot(key) && w.gl?.[name]) rec["v" + key] = w.gl[name].map(thousands);
+      if (hasLoot(key) && w.gl?.[name]) rec["v" + key] = publishGuildLoot(w.gl[name]);
     }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
     if (series?.guilds[name]) rec.sm = series.guilds[name];
