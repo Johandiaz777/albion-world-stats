@@ -127,7 +127,8 @@ jobs:
             # Diario a la 01 UTC, o si la última corrida diaria dejó días por completar.
             # Parte 89: si la última diaria falló (p. ej. sin memoria) el índice publicado queda viejo: se reintenta
             # la próxima hora en vez de esperar a la 01 UTC del día siguiente.
-            PEND=$(node -e "try{const s=require('./index/status.json');const old=Date.now()-Date.parse(s.generatedAt)>26*3600e3;console.log(old||Object.values(s.regions||{}).some(r=>r.daysPending>0||r.nameIndexPending>0||r.pidsPending!==0)?1:0)}catch{console.log(1)}")
+            # Chat 167: un estado sin `lootWindows` es de antes de la plata: arranca a rehacer sin esperar a la 01 UTC.
+            PEND=$(node -e "try{const s=require('./index/status.json');const old=Date.now()-Date.parse(s.generatedAt)>26*3600e3;console.log(old||Object.values(s.regions||{}).some(r=>r.daysPending>0||r.nameIndexPending>0||r.pidsPending!==0||!r.lootWindows)?1:0)}catch{console.log(1)}")
             if [ "$HORA" = "01" ] || [ "$PEND" = "1" ]; then MODE=daily; else MODE=hourly; fi
           fi
           echo "modo: $MODE"
