@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { shardFights, buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
+import { dayOutcome, lootWindows, rollupVersionFor, shardFights, buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
 
 const kill = (killer, kg, victim, vg, fame, parts = []) =>
   JSON.stringify({ killerName: killer, killerGuild: kg, victimName: victim, victimGuild: vg, totalFame: fame, participants: parts });
@@ -304,4 +304,50 @@ test('chat 166: sin plata en el equipo no aparece nada de botín', () => {
   const day = buildDayRollup({ killsText: JSON.stringify({ eventId: 1, battleId: 7, killerName: 'A', killerGuild: 'L', victimName: 'V', totalFame: 1 }), battlesText: '', equipmentText: JSON.stringify({ e: 1, k: [], v: [] }) });
   assert.deepEqual(day.gl, {});
   assert.deepEqual(day.fl, {});
+});
+
+test('chat 167: el botín del jugador por tipo de pelea; lo de grupo no ocupa nada', () => {
+  const k = (n, killerName, victimName, participants, groupSize) => JSON.stringify({ eventId: n, battleId: n < 20 ? 7 : n, killerName, killerGuild: 'L', victimName, victimGuild: 'Z', totalFame: 10, participantsCount: participants.length, groupSize, participants: participants.map((name) => ({ name })) });
+  const zvz = Array.from({ length: 12 }, (_, i) => k(i + 1, 'Ana', `V${i}`, ['Ana', `B${i}`], 2));
+  const killsText = [...zvz, k(30, 'Ana', 'Beto', ['Ana'], 1), k(31, 'Dani', 'Eli', ['Dani', 'Fer'], 2)].join('\n');
+  const eq = (e, ve) => JSON.stringify({ e, k: [], v: [], ve, vi: 0 });
+  const day = buildDayRollup({ killsText, battlesText: '', equipmentText: [eq(1, 5000), eq(30, 2000), eq(31, 9000)].join('\n') });
+  assert.deepEqual(day.px.Ana.l, [7000, 0]);
+  assert.deepEqual(day.px.Ana.lm, [2000, 5000, 0, 0], 'solo y ZvZ; grupo = l menos esto');
+  assert.deepEqual(day.px.Beto.lm, [0, 0, 2000, 0]);
+  assert.equal(day.px.Dani.lm, undefined, 'quien solo pelea en grupo no lleva lm');
+  assert.deepEqual(day.px.Dani.l, [9000, 0]);
+  const two = mergeRollups([day, day]);
+  assert.deepEqual(two.px.Ana.lm, [4000, 10000, 0, 0]);
+  assert.equal(two.px.Dani.lm, undefined);
+  assert.deepEqual(mergeRollups([{ px: { Ana: { m: [], h: [], l: [1, 0] } } }, day]).px.Ana.lm, [2000, 5000, 0, 0], 'un día viejo sin lm no rompe la suma');
+  assert.deepEqual(compactExtras(day.px.Ana).lm, [2, 5, 0, 0], 'se publica en miles');
+  assert.equal(compactExtras(day.px.Dani).lm, undefined);
+  assert.equal(compactExtras(day.px.Ana, false, false).lm, undefined, 'ventana a medio rehacer: sin desglose');
+  assert.deepEqual(compactExtras(day.px.Ana, false, false).l, [7000, 0], 'y el total de siempre se queda');
+});
+
+test('chat 167: solo se rehacen los días con plata', () => {
+  assert.equal(rollupVersionFor('2026-09-28'), 3);
+  assert.equal(rollupVersionFor('2026-09-29'), 4);
+  assert.equal(rollupVersionFor('2026-11-04'), 4);
+});
+
+test('chat 167: un resumen bueno nunca se cambia por uno peor', () => {
+  const prev = { kb: 1000 };
+  assert.equal(dayOutcome({ failed: true, next: { kb: 5000 }, prev }), 'retry', 'un archivo no llegó');
+  assert.equal(dayOutcome({ failed: true, next: null, prev: null }), 'retry');
+  assert.equal(dayOutcome({ failed: false, next: null, prev }), 'empty', 'sin archivos: se deja el que hay');
+  assert.equal(dayOutcome({ failed: false, next: { kb: 900 }, prev }), 'keep', 'el archivo se achicó');
+  assert.equal(dayOutcome({ failed: false, next: { kb: 1000 }, prev }), 'write');
+  assert.equal(dayOutcome({ failed: false, next: { kb: 0 }, prev: null }), 'write', 'día nuevo');
+  assert.equal(dayOutcome({ failed: false, next: { kb: 1 }, prev: {} }), 'write', 'resumen viejo sin kb');
+});
+
+test('chat 167: una ventana a medio rehacer no publica plata', () => {
+  const starts = { w: '2026-10-29', m: '2026-10-06', s: '2026-09-12', a: '2026-07-25' };
+  assert.deepEqual(lootWindows(starts, []), ['w', 'm', 's', 'a']);
+  assert.deepEqual(lootWindows(starts, ['2026-10-01', '2026-09-29']), ['w', 'm']);
+  assert.deepEqual(lootWindows(starts, ['2026-11-01']), []);
+  assert.deepEqual(lootWindows(starts, ['2026-09-20']), ['w', 'm', 's', 'a'], 'un día sin plata no estorba');
 });

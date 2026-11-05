@@ -60,8 +60,9 @@ jobs:
       group: ${{ github.event.inputs.mode == 'rankings-prueba' && 'stats-prueba' || 'stats' }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    # Hasta 59 min esperando el minuto 20 (mode auto) + la construcción.
-    timeout-minutes: 120
+    # Hasta 59 min esperando el minuto 20 (mode auto) + la construcción. Chat 167: con 120, una diaria de 62 min después de
+    # 57 de espera se cortó el 5-nov y no publicó nada. La construcción tiene su propio tope por región (`DAY_BUILD_BUDGET_MS`).
+    timeout-minutes: 180
     env:
       REPO_URL: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
     steps:

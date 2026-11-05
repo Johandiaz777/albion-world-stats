@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, FIGHT_DAYS, shardFights, thousands, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, lootWindows, rollupVersionFor, shardFights, thousands, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 
@@ -48,6 +48,9 @@ export const GUILD_SHARDS = 512;
  * id y abre el perfil por id en Albion (0,3 s) en vez de la búsqueda por nombre (15-40 s). */
 export const ID_SHARDS = 1024;
 const MAX_BACKFILL_DAYS = 25; // días cerrados nuevos por región y corrida (el resto, la próxima)
+/** Chat 167: tope de tiempo rehaciendo días, por región. El 5-nov, 25 días recientes por región pasaron de 62 min, el
+ * trabajo se cortó y no se publicó nada (ni lo de hoy). Lo que no alcance queda para la próxima corrida. */
+const DAY_BUILD_BUDGET_MS = 20 * 60_000;
 /** Primer día con equipo completo (ítem con tier y encantamiento) en el archivo de equipo. */
 const PIECES_FIRST_DAY = '2026-09-29';
 
@@ -160,6 +163,8 @@ const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
  * `bestDay`: { jugador: [kills, muertes, daño] } — su mejor día de la ventana `w` (opcional).
  * `meta`: campos de cabecera de cada parte (`until` del índice, `date`/`yDate` de hoy). */
 function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
+  // Ventanas con la plata completa: `meta.lootWindows` en el índice; hoy y ayer siempre (salen enteros de los archivos).
+  const hasLoot = (key) => !meta.lootWindows || meta.lootWindows.includes(key);
   // Jugadores: agrupados por parte y escritos de a una (parte 90: antes se armaban los registros de
   // TODOS los jugadores juntos y la diaria de Américas pasaba los 4 GB; ahora vive una parte por vez).
   const names = new Set();
@@ -174,7 +179,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       if (hasActivity(v)) {
         rec[key] = nums(v);
         if (!guild && v[P.GUILD]) guild = v[P.GUILD];
-        const x = compactExtras(w.px?.[name], w.gw === true || (w.pv ?? 0) >= PIECES_VERSION);
+        const x = compactExtras(w.px?.[name], w.gw === true || (w.pv ?? 0) >= PIECES_VERSION, hasLoot(key));
         if (x) rec["x" + key] = x;
       }
     }
@@ -198,7 +203,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       const members = topMembers(w.gm?.[name]);
       if (members.length) rec["x" + key] = members;
       if (w.gx?.[name]) rec["z" + key] = w.gx[name];
-      if (w.gl?.[name]) rec["v" + key] = w.gl[name].map(thousands);
+      if (hasLoot(key) && w.gl?.[name]) rec["v" + key] = w.gl[name].map(thousands);
     }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
     if (series?.guilds[name]) rec.sm = series.guilds[name];
@@ -304,7 +309,7 @@ async function daily(region) {
   const missing = dateList(FIRST_DAY, yesterday)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return (r?.v ?? 0) < ROLLUP_VERSION || (d >= DEDUP_FIRST_DAY && r?.dd !== 1) || grown.includes(d);
+      return (r?.v ?? 0) < rollupVersionFor(d) || (d >= DEDUP_FIRST_DAY && r?.dd !== 1) || grown.includes(d);
     })
     .reverse();
   // Su índice por nombre también se rehace (paso 3): las líneas nuevas quedaban fuera.
@@ -314,10 +319,18 @@ async function daily(region) {
   let built = 0;
   const builtDates = [];
   const empty = [];
+  const retry = [];
+  const kept = [];
+  const buildStart = Date.now();
+  let tried = 0;
   for (const d of missing.slice(0, maxDays)) {
+    if (Date.now() - buildStart > DAY_BUILD_BUDGET_MS) break;
+    tried += 1;
+    const failedBefore = stats.failed ?? 0;
     const r = await dayRollup(region, d, stats);
-    if (!r) {
-      empty.push(d);
+    const outcome = dayOutcome({ failed: (stats.failed ?? 0) > failedBefore, next: r, prev: readJson(rollupPath(d), null) });
+    if (outcome !== 'write') {
+      (outcome === 'retry' ? retry : outcome === 'keep' ? kept : empty).push(d);
       continue;
     }
     const { badLines, fl, ...data } = r;
@@ -428,11 +441,15 @@ async function daily(region) {
       seriesGuilds[name].push(g ? [g[0], g[1], g[2]] : [0, 0, 0]);
     }
   }
+  // Días que todavía no tienen la plata: los que no se alcanzaron y los que fallaron en esta corrida.
+  const lootPending = [...missing.slice(tried), ...retry];
+  const lootReady = lootWindows({ w: day(-6), m: day(-29), ...(seasonStart ? { s: seasonStart } : {}), a: FIRST_DAY }, lootPending);
   const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups), {
     until: yesterday,
     // Desde cuándo cuentan "Todo" y "Temporada": la app rotula hasta dónde llega cada total.
     first: FIRST_DAY,
     ...(seasonStart ? { seasonStart } : {}),
+    lootWindows: lootReady,
   });
   writeJson(path.join(here, 'index', region, 'weapons.json'), {
     v: 1,
@@ -466,7 +483,10 @@ async function daily(region) {
     seasonStart,
     daysBuiltNow: built,
     daysWithData: have,
-    daysPending: Math.max(0, missing.length - maxDays),
+    daysPending: lootPending.length,
+    daysRetry: retry,
+    daysKept: kept,
+    lootWindows: lootReady,
     grownDays: grown,
     patched,
     pidsPending: Math.max(0, patchTodo.length - maxDays),

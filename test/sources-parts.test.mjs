@@ -49,3 +49,15 @@ test('partes: el repo histórico (antes del 01/10) no busca partes', async (t) =
   assert.equal(await fetchDayFile('kills', 'asia', '2026-09-10', null), '{"eventId":1}\n');
   assert.deepEqual(pedidos, [legado]);
 });
+
+test('chat 167: «no llegó» se distingue de «no existe»', async (t) => {
+  const [mensual] = candidateUrls('equipment', 'asia', '2026-11-02');
+  t.mock.method(globalThis, 'setTimeout', (fn) => { fn(); return 0; });
+  const stats = { bytes: 0, retries: 0 };
+  t.mock.method(globalThis, 'fetch', fakeFetch({}));
+  assert.equal(await fetchDayFile('equipment', 'asia', '2026-11-02', stats), null);
+  assert.equal(stats.failed ?? 0, 0, 'un 404 no es un fallo');
+  t.mock.method(globalThis, 'fetch', fakeFetch({}, new Set([mensual])));
+  assert.equal(await fetchDayFile('equipment', 'asia', '2026-11-02', stats), null);
+  assert.equal(stats.failed, 1, 'la red no respondió: el día no se puede dar por bueno');
+});
