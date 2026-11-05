@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
+import { shardFights, buildDayRollup, compactExtras, G, gearFromDay, mergeRollups, P, pidsFromKills, piecesFromDay, rivalsByGuild, shardOf, usesOf } from '../lib/rollup.mjs';
 
 const kill = (killer, kg, victim, vg, fame, parts = []) =>
   JSON.stringify({ killerName: killer, killerGuild: kg, victimName: victim, victimGuild: vg, totalFame: fame, participants: parts });
@@ -88,7 +88,7 @@ test('v2: solo / grupo / ZvZ, healer, arma y build completas, botín y miembros 
     line({ e: 2, k: ['T8_2H_CLAYMORE@3', '', 'T8_HEAD_PLATE_SET1@2', 'T8_ARMOR_PLATE_SET1', 'T8_SHOES_PLATE_SET1', 'CAPE', 'HORSE'], v: [''] }),
   ].join('\n');
   const r = buildDayRollup({ killsText, battlesText: '', equipmentText });
-  assert.equal(r.v, 3);
+  assert.equal(r.v, 4);
   assert.deepEqual(r.px.Ana.m, [1, 1, 1, 0, 0, 0]);
   assert.deepEqual(r.px.Beto.m, [0, 0, 0, 1, 0, 0]);
   assert.deepEqual(r.px.Dani.h, [1, 1]);
@@ -274,4 +274,34 @@ test('chat 160: cómo pelea un gremio, solo / grupo / ZvZ, y sus peleas ZvZ', ()
   assert.deepEqual(day.gx.Lobos, [1, 0, 12, 0, 0, 0, 1, 1, 0]);
   assert.deepEqual(day.gx.Zorros, [0, 0, 0, 1, 0, 12, 1, 0, 1]);
   assert.deepEqual(mergeRollups([day, day]).gx.Lobos, [2, 0, 24, 0, 0, 0, 2, 2, 0]);
+});
+
+test('chat 166: botín y pérdida de un gremio por tamaño de pelea, con la cuenta del jugador', () => {
+  const big = (n) => JSON.stringify({ eventId: n, battleId: 7, killerName: `A${n}`, killerGuild: 'Lobos', victimName: `V${n}`, victimGuild: 'Zorros', totalFame: 10, participantsCount: 2, groupSize: 2, participants: [{ name: `A${n}` }, { name: `B${n}` }] });
+  const solo = JSON.stringify({ eventId: 99, battleId: 8, killerName: 'S', killerGuild: 'Lobos', victimName: 'T', victimGuild: 'Zorros', totalFame: 10, participantsCount: 1, groupSize: 1, participants: [{ name: 'S' }] });
+  const killsText = [...Array.from({ length: 12 }, (_, i) => big(i + 1)), solo].join('\n');
+  const eq = (e, ve, vi) => JSON.stringify({ e, k: [], v: [], ve, vi });
+  const equipmentText = [eq(1, 1000, 500), eq(2, 2000, 0), eq(99, 700, 0)].join('\n');
+  const day = buildDayRollup({ killsText, battlesText: '', equipmentText });
+  assert.deepEqual(day.gl.Lobos, [700, 0, 3500, 0, 0, 0]);
+  assert.deepEqual(day.gl.Zorros, [0, 0, 0, 700, 0, 3500]);
+  assert.equal(day.px.A1.l[0], 1500, 'el gremio suma lo mismo que el jugador');
+  assert.deepEqual(mergeRollups([day, day]).gl.Lobos, [1400, 0, 7000, 0, 0, 0]);
+});
+
+test('chat 166: la plata de cada pelea, en miles y solo de peleas de 3+ kills', () => {
+  const k = (n, battleId, killerGuild, victimGuild) => JSON.stringify({ eventId: n, battleId, killerName: `A${n}`, killerGuild, victimName: `V${n}`, victimGuild, totalFame: 10 });
+  const killsText = [k(1, 500, 'Lobos', 'Zorros'), k(2, 500, 'Lobos', 'Zorros'), k(3, 500, 'Zorros', 'Lobos'), k(4, 600, 'Lobos', 'Zorros'), k(5, 500, '', 'Zorros')].join('\n');
+  const eq = (e, ve) => JSON.stringify({ e, k: [], v: [], ve, vi: 0 });
+  const day = buildDayRollup({ killsText, battlesText: '', equipmentText: [eq(1, 2000), eq(2, 3400), eq(3, 1000), eq(4, 9000), eq(5, 1500)].join('\n') });
+  assert.deepEqual(day.fl[500], { Lobos: [5, 1], Zorros: [1, 7] }, 'sin gremio no suma al botín de nadie, pero la víctima sí lo pierde');
+  assert.equal(day.fl[600], undefined, 'una kill suelta no es pelea');
+  assert.deepEqual(Object.keys(shardFights(day.fl)), ['20']);
+  assert.ok(shardFights(day.fl)[20][500]);
+});
+
+test('chat 166: sin plata en el equipo no aparece nada de botín', () => {
+  const day = buildDayRollup({ killsText: JSON.stringify({ eventId: 1, battleId: 7, killerName: 'A', killerGuild: 'L', victimName: 'V', totalFame: 1 }), battlesText: '', equipmentText: JSON.stringify({ e: 1, k: [], v: [] }) });
+  assert.deepEqual(day.gl, {});
+  assert.deepEqual(day.fl, {});
 });

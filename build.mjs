@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, DEDUP_FIRST_DAY, FIGHT_DAYS, shardFights, thousands, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 
@@ -198,6 +198,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       const members = topMembers(w.gm?.[name]);
       if (members.length) rec["x" + key] = members;
       if (w.gx?.[name]) rec["z" + key] = w.gx[name];
+      if (w.gl?.[name]) rec["v" + key] = w.gl[name].map(thousands);
     }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
     if (series?.guilds[name]) rec.sm = series.guilds[name];
@@ -235,6 +236,22 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   return { players: names.size, guilds: gNames.size, ids: Object.keys(ids).length, bytes };
 }
 
+/** Publica las peleas con plata de un día (ver `fl` en lib/rollup.mjs) y devuelve las peleas escritas. */
+function writeFights(base, date, fl) {
+  const dir = path.join(base, 'fights', date);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const shards = shardFights(fl);
+  for (const [n, f] of Object.entries(shards)) writeJson(path.join(dir, `${n}.json`), { v: 1, date, f });
+  return Object.keys(fl ?? {}).length;
+}
+
+/** Borra los días de peleas que ya no hacen falta. */
+function pruneFights(base, keep) {
+  const dir = path.join(base, 'fights');
+  if (!fs.existsSync(dir)) return;
+  for (const date of fs.readdirSync(dir)) if (!keep(date)) fs.rmSync(path.join(dir, date), { recursive: true, force: true });
+}
+
 async function hourly(region) {
   const stats = { bytes: 0, retries: 0 };
   const today = day();
@@ -262,6 +279,10 @@ async function hourly(region) {
     ry ? { date: today, yDate: yesterday } : { date: today },
   );
   writeJson(path.join(here, 'today', region, 'weapons.json'), { v: 1, region, date: today, builtAt: new Date().toISOString(), d: r.weapons });
+  const todayBase = path.join(here, 'today', region);
+  pruneFights(todayBase, (date) => date === today || (ry && date === yesterday));
+  writeFights(todayBase, today, r.fl);
+  if (ry) writeFights(todayBase, yesterday, ry.fl);
   // Índice por nombre de hoy, y de ayer mientras el scraper todavía le agrega (hasta que cierre y
   // lo indexe la corrida diaria). Con los textos ya bajados para el resumen: no se baja dos veces.
   const base = path.join(here, 'today', region);
@@ -299,7 +320,8 @@ async function daily(region) {
       empty.push(d);
       continue;
     }
-    const { badLines, ...data } = r;
+    const { badLines, fl, ...data } = r;
+    if (d >= day(-FIGHT_DAYS)) writeFights(path.join(here, 'index', region), d, fl);
     // Resúmenes v1 (sin extras) se rehacen de a poco, los más recientes primero; mientras tanto la
     // ventana usa el v1 que ya había (cuenta igual kills y muertes, solo le faltan los extras).
     writeJson(rollupPath(d), { region, date: d, ...data, v: ROLLUP_VERSION, dd: 1, badLines });
@@ -426,6 +448,7 @@ async function daily(region) {
   const base = path.join(here, 'index', region);
   const recent = (kind) => dateList(day(-kind.days), yesterday).filter((d) => d >= FIRST_DAY && daySettled(d));
   pruneNameIndex(base, (kind, date) => recent(kind).includes(date));
+  pruneFights(base, (date) => date >= day(-FIGHT_DAYS));
   let nameIndexBytes = 0;
   let nameIndexBuilt = 0;
   let nameIndexPending = 0;
