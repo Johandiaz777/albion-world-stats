@@ -141,3 +141,42 @@ test('si la subida del día rescatado falla, sus ids vuelven a la fila y el cont
   assert.equal(r3.state.dates[DATE].unconfirmed, undefined);
   assert.equal(r3.done.added, 0);
 });
+
+test('por pelea: 51 por pedido, solo las perdidas; la que la pelea no trae va por id; el día queda igual', async () => {
+  // 120 kills: las 90 primeras en la pelea 7 (2 páginas de lo perdido), 4 en la pelea 8, el resto sueltas.
+  const base = day(120, (i) => i < 100);
+  base.kills.forEach((k, i) => {
+    if (i < 90) k.battleId = 7;
+    else if (i < 94) k.battleId = 8;
+  });
+  const nd = (rows) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+  const d = { ...base, killsText: nd(base.kills) };
+  const allEvents = joinKillsAndEquipment(d.kills, d.equipment).events;
+  const complete = emptyMetaRollup(DATE);
+  addEventsToRollup(complete, allEvents);
+  const kept = new Set(allEvents.slice(100).map((e) => e.EventId));
+  const partial = emptyMetaRollup(DATE);
+  addEventsToRollup(partial, allEvents.filter((e) => kept.has(e.EventId)));
+  const store = createMetaStore(memoryIo(), 'asia');
+  store.finalizeDay({ v: 2, date: DATE, rev: 1, status: 'final', rollup: partial });
+  const byId = new Map(allEvents.map((e) => [e.EventId, e]));
+  // La API: la pelea 7 trae sus 90 kills MENOS una (la 5), de a 51.
+  const battle7 = allEvents.slice(0, 90).filter((_e, i) => i !== 5);
+  const calls = { battle: 0, event: 0 };
+  const fetchBattle = async (id, offset) => {
+    calls.battle += 1;
+    const list = id === 7 ? battle7 : allEvents.slice(90, 94);
+    return { status: 200, events: structuredClone(list.slice(offset, offset + 51)) };
+  };
+  const fetchEvent = async (id) => {
+    calls.event += 1;
+    return { status: 200, event: structuredClone(byId.get(id)) };
+  };
+  const clock = at();
+  const r = await rescueRegion({ state: null, store, readDayTexts: async () => ({ kills: d.killsText, equipment: d.equipmentText }), fetchEvent, fetchBattle, deadline: 1e9, now: clock.now, wait: clock.wait });
+  assert.equal(r.done.added, 100);
+  assert.equal(calls.battle, 3); // pelea 7: 2 páginas; pelea 8: 1
+  assert.equal(calls.event, 7); // la 5 de la pelea 7 + las 6 sueltas (94..99)
+  same(store.readDay(DATE).rollup, complete);
+  assert.equal(r.state.dates[DATE].finished, true);
+});
