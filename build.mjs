@@ -236,6 +236,10 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   }
   const builtAt = new Date().toISOString();
   const gHead = series ? { smFrom: series.from } : {};
+  // Chat 177: ventanas cuyos datos por asistencia están COMPLETOS (`k`: conteos; `l`: plata). Así la app distingue
+  // «sin kills en ese corte» (no va, es 0) de «todavía no está» (no muestra el filtro) sin adivinar.
+  const keys = Object.keys(windows);
+  meta = { ...meta, assist: { k: keys.filter((k) => hasCombatAssist(windows[k])), l: keys.filter((k) => hasLoot(k) && hasLootAssist(windows[k])) } };
   let bytes = 0;
   const spread = (recs, count) => {
     const shards = Array.from({ length: count }, () => ({}));
