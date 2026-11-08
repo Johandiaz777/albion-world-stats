@@ -221,7 +221,10 @@ test('chat 176: plata por asistencia, de un día a la ventana y al archivo (solo
     line({ e: 4, ve: 4000, vi: 500 }),
   ].join('\n');
   const r = buildDayRollup({ killsText, battlesText, equipmentText });
-  assert.equal(r.lav, 1);
+  assert.equal(r.lav, 2);
+  // v2: kills, muertes y fama por corte (kills 1v1, 1-5, 6+, 10+, ZvZ, muertes …, fama de kill …, fama de muerte …).
+  assert.deepEqual(r.px.Ana.ka, [1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1]);
+  assert.deepEqual(r.gka.Zorros, [0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0]);
   // Ana: botín 1v1 1000, 1-5 2000, 6+ 3000 (también 10+); perdió 4500 en ZvZ (kill de 1-5 ayudas en pelea de 25).
   assert.deepEqual(r.px.Ana.la, [1000, 2000, 3000, 3000, 0, 0, 4500, 0, 0, 4500]);
   // Los tres cortes base (1v1, 1-5, 6+) suman el total; 10+ y ZvZ son recortes aparte.

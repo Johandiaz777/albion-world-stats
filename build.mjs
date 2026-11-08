@@ -410,8 +410,12 @@ async function daily(region) {
       if (killsText !== null && equipmentText !== null && battlesText !== null) {
         const full = buildDayRollup({ killsText, battlesText, equipmentText });
         next.px = { ...(next.px ?? r.px) };
-        for (const [name, x] of Object.entries(full.px)) if (x.la && next.px[name]) next.px[name] = { ...next.px[name], la: x.la };
+        for (const [name, x] of Object.entries(full.px)) {
+          if (!next.px[name] || (!x.la && !x.ka)) continue;
+          next.px[name] = { ...next.px[name], ...(x.la ? { la: x.la } : {}), ...(x.ka ? { ka: x.ka } : {}) };
+        }
         next.gla = full.gla;
+        next.gka = full.gka;
         next.lav = LOOT_ASSIST_VERSION;
         if (!builtDates.includes(d)) builtDates.push(d);
       }
