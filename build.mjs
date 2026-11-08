@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, hasLootAssist, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 import { closedLootPeriods, lootOfRollup, mondayOf, monthStartOf } from './lib/rank-loot.mjs';
@@ -377,7 +377,7 @@ async function daily(region) {
     .filter((d, i, all) => d >= FIRST_DAY && all.indexOf(d) === i)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION));
+      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) || !hasLootAssist({ ...r, date: d }));
     })
     .sort()
     .reverse();
@@ -399,6 +399,21 @@ async function daily(region) {
         for (const [name, g] of Object.entries(gear)) if (next.px[name]) next.px[name] = { ...next.px[name], ...g };
         next.pv = PIECES_VERSION;
         builtDates.push(d);
+      }
+    }
+    if (!hasLootAssist({ ...r, date: d })) {
+      // Chat 176: la plata por asistencia del día, con el MISMO cálculo que un día nuevo (buildDayRollup entero: los
+      // cortes de pelea necesitan las kills y el archivo de peleas). Solo se copian `la` y `gla`; lo demás del resumen
+      // no se toca. Si un archivo no llegó, el día sigue pendiente (la próxima corrida lo reintenta).
+      const equipmentText = killsText === null ? null : await fetchDayFile('equipment', region, d, stats);
+      const battlesText = killsText === null ? null : await fetchDayFile('battles', region, d, stats);
+      if (killsText !== null && equipmentText !== null && battlesText !== null) {
+        const full = buildDayRollup({ killsText, battlesText, equipmentText });
+        next.px = { ...(next.px ?? r.px) };
+        for (const [name, x] of Object.entries(full.px)) if (x.la && next.px[name]) next.px[name] = { ...next.px[name], la: x.la };
+        next.gla = full.gla;
+        next.lav = LOOT_ASSIST_VERSION;
+        if (!builtDates.includes(d)) builtDates.push(d);
       }
     }
     writeJson(rollupPath(d), next);

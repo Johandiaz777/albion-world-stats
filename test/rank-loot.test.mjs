@@ -7,6 +7,7 @@ import { test } from 'node:test';
 
 import {
   addDays,
+  addLoot,
   closedLootPeriods,
   lootFile,
   lootOfRollup,
@@ -24,6 +25,13 @@ import { writeJson } from '../lib/store.mjs';
 // solo, grupo, zvz, muertes...].
 const rollup = (date, px, gl = {}) => ({ date, px: Object.fromEntries(Object.entries(px).map(([n, l]) => [n, { l }])), gl });
 
+/** Lo de siempre (`p`, `g`, `from`, `until`) sin lo nuevo del chat 176 (`pa`, `ga`, `assist`). */
+const pg = (x) => {
+  if (!x) return x;
+  const { pa, ga, assist, ...rest } = x;
+  return rest;
+};
+
 test('lunes y primer día del mes en UTC, como las funciones', () => {
   assert.equal(mondayOf('2026-11-08'), '2026-11-02'); // domingo
   assert.equal(mondayOf('2026-11-09'), '2026-11-09'); // lunes
@@ -35,8 +43,8 @@ test('lunes y primer día del mes en UTC, como las funciones', () => {
 
 test('lootOfRollup: miles, jugadores de px.l, gremios de gl (botín y perdido de los 3 tamaños)', () => {
   const r = rollup('2026-11-05', { Ana: [1_234_567, 400_499], Cero: [0, 0], Beto: [0, 2_000] }, { G1: [1000, 2000, 3000, 500, 0, 499, 9, 9, 9] });
-  assert.deepEqual(lootOfRollup(r), { p: { Ana: [1235, 400], Beto: [0, 2] }, g: { G1: [6, 1] } });
-  assert.deepEqual(lootOfRollup(null), { p: {}, g: {} });
+  assert.deepEqual(pg(lootOfRollup(r)), { p: { Ana: [1235, 400], Beto: [0, 2] }, g: { G1: [6, 1] } });
+  assert.deepEqual(pg(lootOfRollup(null)), { p: {}, g: {} });
 });
 
 test('closedLootPeriods: Semana y Mes suman sus días de calendario; Temporada y Todo salen del acumulado', () => {
@@ -48,10 +56,10 @@ test('closedLootPeriods: Semana y Mes suman sus días de calendario; Temporada y
   };
   const windows = { s: { px: { Ana: { l: [9_000, 1_000] } } }, a: { px: { Ana: { l: [20_000, 0] } }, gl: { G: [1000, 0, 0, 0, 0, 0] } } };
   const c = closedLootPeriods({ until: '2026-11-03', dayLoot, windows, seasonStart: '2026-09-12', firstDay: '2026-07-25' });
-  assert.deepEqual(c.periods.week, { from: '2026-11-02', until: '2026-11-03', p: { Ana: [1, 3], Beto: [8, 1] }, g: { G: [1, 0] } });
-  assert.deepEqual(c.periods.month, { from: '2026-11-01', until: '2026-11-03', p: { Ana: [11, 5], Beto: [8, 1] }, g: { G: [6, 5] } });
-  assert.deepEqual(c.periods.season, { from: '2026-09-12', until: '2026-11-03', p: { Ana: [9, 1] }, g: {} });
-  assert.deepEqual(c.periods.all, { from: '2026-07-25', until: '2026-11-03', p: { Ana: [20, 0] }, g: { G: [1, 0] } });
+  assert.deepEqual(pg(c.periods.week), { from: '2026-11-02', until: '2026-11-03', p: { Ana: [1, 3], Beto: [8, 1] }, g: { G: [1, 0] } });
+  assert.deepEqual(pg(c.periods.month), { from: '2026-11-01', until: '2026-11-03', p: { Ana: [11, 5], Beto: [8, 1] }, g: { G: [6, 5] } });
+  assert.deepEqual(pg(c.periods.season), { from: '2026-09-12', until: '2026-11-03', p: { Ana: [9, 1] }, g: {} });
+  assert.deepEqual(pg(c.periods.all), { from: '2026-07-25', until: '2026-11-03', p: { Ana: [20, 0] }, g: { G: [1, 0] } });
   // Sin la plata completa de la ventana, el período no se guarda (nunca una cifra de menos).
   const partial = closedLootPeriods({ until: '2026-11-03', dayLoot, windows, seasonStart: '2026-09-12', firstDay: '2026-07-25', ready: ['w', 'm'] });
   assert.deepEqual(Object.keys(partial.periods).sort(), ['month', 'week']);
@@ -60,29 +68,29 @@ test('closedLootPeriods: Semana y Mes suman sus días de calendario; Temporada y
 const todayLoot = (today, y = null) => ({ date: today, d: { p: { Ana: [1, 0] }, g: {} }, y });
 
 test('periodLoot: Hoy es solo hoy', () => {
-  assert.deepEqual(periodLoot({ from: '2026-11-08', today: '2026-11-08', closed: null, todayLoot: todayLoot('2026-11-08') }), { p: { Ana: [1, 0] }, g: {} });
+  assert.deepEqual(pg(periodLoot({ from: '2026-11-08', today: '2026-11-08', closed: null, todayLoot: todayLoot('2026-11-08') })), { p: { Ana: [1, 0] }, g: {} });
 });
 
 test('periodLoot: con los días cerrados de este período, suma cerrados + hoy', () => {
   const closed = { from: '2026-11-02', until: '2026-11-07', p: { Ana: [10, 5] }, g: {} };
-  assert.deepEqual(periodLoot({ from: '2026-11-02', today: '2026-11-08', closed, todayLoot: todayLoot('2026-11-08') }), { p: { Ana: [11, 5] }, g: {} });
+  assert.deepEqual(pg(periodLoot({ from: '2026-11-02', today: '2026-11-08', closed, todayLoot: todayLoot('2026-11-08') })), { p: { Ana: [11, 5] }, g: {} });
 });
 
 test('periodLoot: antes de la diaria (cerrado hasta anteayer) suma el ayer de la horaria', () => {
   const closed = { from: '2026-11-02', until: '2026-11-06', p: { Ana: [10, 5] }, g: {} };
   const y = { date: '2026-11-07', p: { Ana: [100, 0] }, g: {} };
-  assert.deepEqual(periodLoot({ from: '2026-11-02', today: '2026-11-08', closed, todayLoot: todayLoot('2026-11-08', y) }), { p: { Ana: [111, 5] }, g: {} });
+  assert.deepEqual(pg(periodLoot({ from: '2026-11-02', today: '2026-11-08', closed, todayLoot: todayLoot('2026-11-08', y) })), { p: { Ana: [111, 5] }, g: {} });
 });
 
 test('periodLoot: el martes antes de la diaria el cerrado es de la semana pasada: se ignora y cuentan ayer + hoy', () => {
   const closed = { from: '2026-11-02', until: '2026-11-08', p: { Ana: [999, 999] }, g: {} };
   const y = { date: '2026-11-09', p: { Ana: [3, 0] }, g: {} };
-  assert.deepEqual(periodLoot({ from: '2026-11-09', today: '2026-11-10', closed, todayLoot: todayLoot('2026-11-10', y) }), { p: { Ana: [4, 0] }, g: {} });
+  assert.deepEqual(pg(periodLoot({ from: '2026-11-09', today: '2026-11-10', closed, todayLoot: todayLoot('2026-11-10', y) })), { p: { Ana: [4, 0] }, g: {} });
 });
 
 test('periodLoot: el lunes la semana es solo hoy', () => {
   const closed = { from: '2026-11-02', until: '2026-11-08', p: { Ana: [999, 999] }, g: {} };
-  assert.deepEqual(periodLoot({ from: '2026-11-09', today: '2026-11-09', closed, todayLoot: todayLoot('2026-11-09') }), { p: { Ana: [1, 0] }, g: {} });
+  assert.deepEqual(pg(periodLoot({ from: '2026-11-09', today: '2026-11-09', closed, todayLoot: todayLoot('2026-11-09') })), { p: { Ana: [1, 0] }, g: {} });
 });
 
 test('periodLoot: con un hueco (diaria atrasada y sin ayer) no hay dato', () => {
@@ -189,4 +197,66 @@ test('runRankLootRegion: publica los períodos completos, lee Firestore una vez 
   await runRankLootRegion({ root, region: 'asia', now: new Date('2026-11-08T21:10:00Z'), fetchImpl, log: () => {} });
   assert.equal(calls.length, 0);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('chat 176: plata por asistencia, de un día a la ventana y al archivo (solo si TODOS los días la tienen)', async () => {
+  const { buildDayRollup, mergeRollups } = await import('../lib/rollup.mjs');
+  const line = (o) => JSON.stringify(o);
+  const parts = (n, g) => Array.from({ length: n }, (_, i) => ({ name: `${g}${i}`, guildName: g }));
+  const killsText = [
+    // 1 vs 1
+    line({ eventId: 1, battleId: 1, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 1, participantsCount: 1, participants: [{ name: 'Ana', guildName: 'Lobos' }] }),
+    // 1-5 ayudas: 4 personas
+    line({ eventId: 2, battleId: 2, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Caro', victimGuild: 'Osos', totalFame: 1, participantsCount: 4, participants: parts(4, 'Lobos') }),
+    // 6+ y 10+: la API corta en 4, pero el grupo era de 12
+    line({ eventId: 3, battleId: 3, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Dani', victimGuild: 'Osos', totalFame: 1, participantsCount: 4, groupSize: 12, participants: parts(4, 'Lobos') }),
+    // ZvZ: pelea de 25 (1-5 ayudas en la kill)
+    line({ eventId: 4, battleId: 4, killerName: 'Eva', killerGuild: 'Zorros', victimName: 'Ana', victimGuild: 'Lobos', totalFame: 1, participantsCount: 3, participants: parts(3, 'Zorros') }),
+  ].join('\n');
+  const battlesText = line({ battleId: 4, players: Array.from({ length: 25 }, (_, i) => ({ name: `p${i}` })), guilds: [] });
+  const equipmentText = [
+    line({ e: 1, ve: 1000, vi: 0 }),
+    line({ e: 2, ve: 2000, vi: 0 }),
+    line({ e: 3, ve: 3000, vi: 0 }),
+    line({ e: 4, ve: 4000, vi: 500 }),
+  ].join('\n');
+  const r = buildDayRollup({ killsText, battlesText, equipmentText });
+  assert.equal(r.lav, 1);
+  // Ana: botín 1v1 1000, 1-5 2000, 6+ 3000 (también 10+); perdió 4500 en ZvZ (kill de 1-5 ayudas en pelea de 25).
+  assert.deepEqual(r.px.Ana.la, [1000, 2000, 3000, 3000, 0, 0, 4500, 0, 0, 4500]);
+  // Los tres cortes base (1v1, 1-5, 6+) suman el total; 10+ y ZvZ son recortes aparte.
+  assert.equal(r.px.Ana.la[0] + r.px.Ana.la[1] + r.px.Ana.la[2], r.px.Ana.l[0]);
+  assert.equal(r.px.Ana.la[5] + r.px.Ana.la[6] + r.px.Ana.la[7], r.px.Ana.l[1]);
+  assert.deepEqual(r.gla.Lobos, [1000, 2000, 3000, 3000, 0, 0, 4500, 0, 0, 4500]);
+  assert.deepEqual(r.gla.Zorros, [0, 4500, 0, 0, 4500, 0, 0, 0, 0, 0]);
+
+  // Un día: miles, por asistencia.
+  const day = lootOfRollup({ ...r, date: '2026-11-07' });
+  assert.equal(day.assist, true);
+  assert.deepEqual(day.pa.Ana, [1, 2, 3, 3, 0, 0, 5, 0, 0, 5]);
+  assert.deepEqual(day.ga.Zorros, [0, 5, 0, 0, 5, 0, 0, 0, 0, 0]);
+
+  // Una ventana con un día viejo (con plata, sin `lav`) NO tiene la plata por asistencia; con días de antes de la plata, sí.
+  const viejo = { date: '2026-10-01', px: { Ana: { m: [0, 0, 0, 0, 0, 0], h: [0, 0], w: {}, b: {}, l: [9000, 0], p: {} } } };
+  const antes = { date: '2026-09-01', px: {} };
+  assert.equal(lootOfRollup(mergeRollups([{ ...r, date: '2026-11-07' }, viejo])).assist, false);
+  const w = mergeRollups([{ ...r, date: '2026-11-07' }, antes, { ...r, date: '2026-11-06' }]);
+  assert.equal(lootOfRollup(w).assist, true);
+  assert.deepEqual(lootOfRollup(w).pa.Ana, [2, 4, 6, 6, 0, 0, 9, 0, 0, 9]);
+
+  // Sumas: con una parte sin plata por asistencia (archivo viejo), la suma tampoco la tiene.
+  const sum = addLoot({ p: {}, g: {} }, day);
+  addLoot(sum, day);
+  assert.equal(sum.assist, true);
+  assert.deepEqual(sum.pa.Ana, [2, 4, 6, 6, 0, 0, 10, 0, 0, 10]);
+  assert.equal(addLoot(addLoot({ p: {}, g: {} }, day), { p: {}, g: {} }).assist, false);
+
+  // Archivo: `pa`/`ga` solo de los nombres de las listas con algo; sin `assist`, no van.
+  const f = lootFile({ region: 'asia', period: 'day', key: '2026-11-07', from: '2026-11-07', names: { p: ['Ana', 'Zed'], g: ['Lobos'] }, loot: sum, builtAt: 'x' });
+  assert.equal(f.assist, true);
+  assert.deepEqual(f.pa, { Ana: [2, 4, 6, 6, 0, 0, 10, 0, 0, 10] });
+  assert.deepEqual(Object.keys(f.ga), ['Lobos']);
+  const sinAsistencia = lootFile({ region: 'asia', period: 'day', key: 'k', from: '2026-11-07', names: { p: ['Ana'], g: [] }, loot: { p: { Ana: [1, 0] }, g: {} }, builtAt: 'x' });
+  assert.equal(sinAsistencia.assist, undefined);
+  assert.equal(sinAsistencia.pa, undefined);
 });
