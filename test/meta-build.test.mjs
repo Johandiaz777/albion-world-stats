@@ -398,6 +398,8 @@ test('chat 179: el grupo del asesino llega al evento y decide el tamaño de pele
   const ev = eventFromLinesP179(kill, { k: [], v: [] });
   assert.equal(ev.groupSize, 14);
   assert.equal(peopleP179(ev), 14);
+  // Con 1 a 3 en la lista, la lista es completa: el grupo NO son los que asistieron.
+  assert.equal(peopleP179(eventFromLinesP179({ ...kill, participantsCount: 2 }, { k: [], v: [] })), 2);
   // Un solo participante pero en grupo de 3: no es «solo» (regla del dueño: grupo 1 y un participante).
   const grupo = eventFromLinesP179({ ...kill, participantsCount: 1, groupSize: 3 }, { k: [], v: [] });
   assert.equal(soloP179(grupo), false);
