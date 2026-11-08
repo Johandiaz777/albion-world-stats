@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, hasLootAssist, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, hasCombatAssist, hasLootAssist, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 import { closedLootPeriods, lootOfRollup, mondayOf, monthStartOf } from './lib/rank-loot.mjs';
@@ -181,6 +181,8 @@ const hasActivity = (v) => v && (v[0] || v[1] || v[2]);
 function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   // Ventanas con la plata completa: `meta.lootWindows` en el índice; hoy y ayer siempre (salen enteros de los archivos).
   const hasLoot = (key) => !meta.lootWindows || meta.lootWindows.includes(key);
+  // Chat 177: ¿la ventana trae la plata y los conteos por asistencia de TODOS sus días? (perfiles con filtros).
+  const assistOf = (w) => ({ loot: hasLootAssist(w), combat: hasCombatAssist(w) });
   // Jugadores: agrupados por parte y escritos de a una (parte 90: antes se armaban los registros de
   // TODOS los jugadores juntos y la diaria de Américas pasaba los 4 GB; ahora vive una parte por vez).
   const names = new Set();
@@ -195,7 +197,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       if (hasActivity(v)) {
         rec[key] = nums(v);
         if (!guild && v[P.GUILD]) guild = v[P.GUILD];
-        const x = compactExtras(w.px?.[name], w.gw === true || (w.pv ?? 0) >= PIECES_VERSION, hasLoot(key));
+        const x = compactExtras(w.px?.[name], w.gw === true || (w.pv ?? 0) >= PIECES_VERSION, hasLoot(key), assistOf(w));
         if (x) rec["x" + key] = x;
       }
     }
@@ -220,6 +222,11 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
       if (members.length) rec["x" + key] = members;
       if (w.gx?.[name]) rec["z" + key] = w.gx[name];
       if (hasLoot(key) && w.gl?.[name]) rec["v" + key] = publishGuildLoot(w.gl[name]);
+      // Chat 177: plata (`q`, en miles) y kills/muertes/fama (`k`, fama en miles) por asistencia: 1v1, 1-5, 6+, 10+, ZvZ.
+      const gla = w.gla?.[name];
+      if (hasLoot(key) && hasLootAssist(w) && gla?.some((n) => thousands(n) > 0)) rec["q" + key] = gla.map(thousands);
+      const gka = w.gka?.[name];
+      if (hasCombatAssist(w) && gka?.some((n, i) => i < 10 && n > 0)) rec["k" + key] = publishCombatAssist(gka);
     }
     for (const [key, map] of Object.entries(rivals ?? {})) if (map[name]) rec[key] = map[name];
     if (series?.guilds[name]) rec.sm = series.guilds[name];
@@ -372,12 +379,12 @@ async function daily(region) {
   // Auditoría p86 S1: un `pids` vacío es de una descarga que falló (antes se marcaba `{}` y el día no se
   // completaba nunca); se reintenta como si faltara.
   const lacksPids = (r) => !r.pids || !Object.keys(r.pids).length;
-  const patchTodo = dateList(PIECES_FIRST_DAY, yesterday)
+  const patchTodo = dateList(FIRST_DAY, yesterday)
     .concat([...recentDays])
     .filter((d, i, all) => d >= FIRST_DAY && all.indexOf(d) === i)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) || !hasLootAssist({ ...r, date: d }));
+      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) || !hasLootAssist({ ...r, date: d }) || !hasCombatAssist({ ...r, date: d }));
     })
     .sort()
     .reverse();
@@ -401,22 +408,31 @@ async function daily(region) {
         builtDates.push(d);
       }
     }
-    if (!hasLootAssist({ ...r, date: d })) {
+    if (!hasLootAssist({ ...r, date: d }) || !hasCombatAssist({ ...r, date: d })) {
       // Chat 176: la plata por asistencia del día, con el MISMO cálculo que un día nuevo (buildDayRollup entero: los
       // cortes de pelea necesitan las kills y el archivo de peleas). Solo se copian `la` y `gla`; lo demás del resumen
       // no se toca. Si un archivo no llegó, el día sigue pendiente (la próxima corrida lo reintenta).
-      const equipmentText = killsText === null ? null : await fetchDayFile('equipment', region, d, stats);
+      // Chat 177: los días de antes de la plata (25-jul…28-sep) solo necesitan los conteos (`ka`/`gka`): sin equipo, y un
+      // archivo de peleas que no existe (404) no lo frena; solo una descarga que FALLÓ deja el día pendiente.
+      const withLoot = d >= LOOT_FIRST_DAY;
+      const failedBefore = stats.failed ?? 0;
+      const equipmentText = killsText === null || !withLoot ? null : await fetchDayFile('equipment', region, d, stats);
       const battlesText = killsText === null ? null : await fetchDayFile('battles', region, d, stats);
-      if (killsText !== null && equipmentText !== null && battlesText !== null) {
+      const complete = killsText !== null && (stats.failed ?? 0) === failedBefore && (withLoot ? equipmentText !== null && battlesText !== null : true);
+      if (complete) {
         const full = buildDayRollup({ killsText, battlesText, equipmentText });
         next.px = { ...(next.px ?? r.px) };
         for (const [name, x] of Object.entries(full.px)) {
-          if (!next.px[name] || (!x.la && !x.ka)) continue;
-          next.px[name] = { ...next.px[name], ...(x.la ? { la: x.la } : {}), ...(x.ka ? { ka: x.ka } : {}) };
+          const la = withLoot && x.la ? { la: x.la } : {};
+          if (!next.px[name] || (!la.la && !x.ka)) continue;
+          next.px[name] = { ...next.px[name], ...la, ...(x.ka ? { ka: x.ka } : {}) };
         }
-        next.gla = full.gla;
+        if (withLoot) {
+          next.gla = full.gla;
+          next.lav = LOOT_ASSIST_VERSION;
+        }
         next.gka = full.gka;
-        next.lav = LOOT_ASSIST_VERSION;
+        next.kav = 1;
         if (!builtDates.includes(d)) builtDates.push(d);
       }
     }
@@ -444,6 +460,7 @@ async function daily(region) {
       rollupVersion: ROLLUP_VERSION,
       rebuiltDates: builtDates,
       loadDays,
+      loadDay: (d) => readJson(rollupPath(d), null),
       dateList,
     });
     // Auditoría Muse p92 H4: el acumulado crece con los jugadores DISTINTOS vistos (no con los días) y nada lo
@@ -464,7 +481,7 @@ async function daily(region) {
   const accSize = {};
   // Chat 175: botín de cada día de la semana y el mes de calendario en curso (para ordenar Rankings por botín). Solo se
   // guarda la plata (chica); los resúmenes siguen el camino de siempre.
-  const monthRollups = load(range(29));
+  let monthRollups = load(range(29));
   const lootFrom = [mondayOf(yesterday), monthStartOf(yesterday)].sort()[0];
   const dayLoot = {};
   for (const r of monthRollups) if (r.date >= lootFrom) dayLoot[r.date] = lootOfRollup(r);
@@ -476,8 +493,21 @@ async function daily(region) {
   const windows = {
     w: mergeRollups(weekRollups), // 6 cerrados + hoy = 7 días
     m: mergeRollups(monthRollups), // 29 cerrados + hoy = 30 días
-    a: accumulated('a', FIRST_DAY),
   };
+  // Chat 177 (dueño, 8-nov: «el período de los perfiles igual que Rankings»): Semana desde el lunes y Mes desde el día 1
+  // del día de HOY (la app les suma hoy), en ventanas NUEVAS `c` y `o`: la 2.61.0 y la 2.61.1 leen `w`/`m` como 7 y 30
+  // días y no cambian. El lunes o el día 1 todavía no hay días cerrados: la ventana no va y la app usa solo hoy.
+  const today = day();
+  const calendar = { c: mondayOf(today), o: monthStartOf(today) };
+  const byDate = new Map(monthRollups.map((r) => [r.date, r]));
+  for (const [key, from] of Object.entries(calendar)) {
+    if (from > yesterday) continue;
+    windows[key] = mergeRollups(dateList(from, yesterday).map((d) => byDate.get(d) ?? readJson(rollupPath(d), null)).filter(Boolean));
+  }
+  // Los 29 días ya no hacen falta: se sueltan ANTES de los acumulados (la diaria ya usa ~7,4 GB de 12; chat 177).
+  byDate.clear();
+  monthRollups = null;
+  windows.a = accumulated('a', FIRST_DAY);
   if (seasonStart) windows.s = accumulated('s', seasonStart);
   const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids) };
   // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
@@ -495,7 +525,7 @@ async function daily(region) {
   }
   // Días que todavía no tienen la plata: los que no se alcanzaron y los que fallaron en esta corrida.
   const lootPending = [...missing.slice(tried), ...retry];
-  const lootReady = lootWindows({ w: day(-6), m: day(-29), ...(seasonStart ? { s: seasonStart } : {}), a: FIRST_DAY }, lootPending);
+  const lootReady = lootWindows({ w: day(-6), m: day(-29), ...calendar, ...(seasonStart ? { s: seasonStart } : {}), a: FIRST_DAY }, lootPending);
   // Chat 175: días cerrados de Semana, Mes, Temporada y Todo, para `build.mjs loot`. Interno. Solo los períodos con la
   // plata completa (`lootReady`): uno con días por rehacer no se publica.
   writeJson(
@@ -506,6 +536,8 @@ async function daily(region) {
     until: yesterday,
     // Desde cuándo cuentan "Todo" y "Temporada": la app rotula hasta dónde llega cada total.
     first: FIRST_DAY,
+    // Chat 177: primer día de Semana (`c`) y Mes (`o`) de calendario; la app los usa solo si coinciden con los suyos.
+    cal: calendar,
     ...(seasonStart ? { seasonStart } : {}),
     lootWindows: lootReady,
   });

@@ -353,3 +353,48 @@ test('chat 167: una ventana a medio rehacer no publica plata', () => {
   assert.deepEqual(lootWindows(starts, ['2026-11-01']), []);
   assert.deepEqual(lootWindows(starts, ['2026-09-20']), ['w', 'm', 's', 'a'], 'un día sin plata no estorba');
 });
+
+test('chat 177: conteos por asistencia de TODO el historial (no solo desde la plata)', async () => {
+  const { hasCombatAssist, hasLootAssist, publishCombatAssist } = await import('../lib/rollup.mjs');
+  // Un día de antes de la plata no necesita `la`, pero SÍ los conteos.
+  assert.equal(hasLootAssist({ date: '2026-08-01' }), true);
+  assert.equal(hasCombatAssist({ date: '2026-08-01' }), false);
+  assert.equal(hasCombatAssist({ date: '2026-08-01', kav: 1 }), true);
+  assert.equal(hasCombatAssist({ date: '2026-11-07', lav: 2 }), true, 'los días de 2777d61 ya los traen');
+  assert.equal(hasCombatAssist({ lav: 2 }), false, 'una ventana sumada solo con kav');
+  // Un día nuevo los trae; una ventana con un día viejo sin ellos no los publica.
+  const line = JSON.stringify({ eventId: 1, battleId: null, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 12345, participantsCount: 1, groupSize: 1, participants: [] });
+  const day = buildDayRollup({ killsText: line, battlesText: '', equipmentText: '' });
+  assert.equal(day.kav, 1);
+  assert.equal(hasCombatAssist(day), true);
+  assert.equal(mergeRollups([{ ...day, date: '2026-11-07' }]).kav, 1);
+  assert.equal(mergeRollups([{ ...day, date: '2026-11-07' }, { date: '2026-08-01', players: {} }]).kav, 0);
+  assert.equal(mergeRollups([{ ...day, date: '2026-11-07' }, { date: '2026-08-01', players: {}, kav: 1 }]).kav, 1);
+  // Publicar: kills y muertes tal cual, fama en miles; la plata en miles; nada si la ventana está a medias.
+  assert.deepEqual(publishCombatAssist([1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 12345, 0, 0, 0, 0, 999, 0, 0, 0, 0]).slice(10, 16), [12, 0, 0, 0, 0, 1]);
+  const ana = day.px.Ana;
+  assert.equal(ana.ka[0], 1, '1 vs 1');
+  assert.equal(compactExtras(ana).ka, undefined, 'sin el sí de la ventana no va');
+  assert.deepEqual(compactExtras(ana, false, true, { loot: true, combat: true }).ka.slice(0, 1), [1]);
+  assert.equal(compactExtras(day.px.Beto, false, true, { loot: true, combat: true }).ka[5], 1, 'su muerte en 1 vs 1');
+  assert.equal(compactExtras(ana, false, true, { loot: true, combat: false }).ka, undefined);
+});
+
+test('chat 177: rehacer el acumulado día por día da lo mismo que todos juntos', async () => {
+  const { advanceAccumulator } = await import('../lib/rollup.mjs');
+  const { dateList } = await import('../lib/sources.mjs');
+  const dayR = (k) => ({ players: { Ana: [k, 1, 0, 0, 0, 0, 0, 'Lobos'] }, guilds: { Lobos: [k, 1, 0, 0, 0, 0, 0] }, rivals: {}, weapons: {}, ids: {}, px: { Ana: { m: [k, 0, 0, 0, 0, 0], h: [0, 0], w: {}, b: {}, l: [0, 0], p: {}, ka: [k, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] } }, gm: {}, kav: 1 });
+  const files = { '2026-07-25': dayR(1), '2026-07-26': dayR(2), '2026-07-27': dayR(4) };
+  const loaded = [];
+  const loadDay = (d) => {
+    loaded.push(d);
+    return files[d] ?? null;
+  };
+  const base = { from: '2026-07-25', until: '2026-07-28', rollupVersion: 2, rebuiltDates: [], dateList };
+  const together = advanceAccumulator(null, { ...base, loadDays: (dates) => dates.map((d) => files[d]).filter(Boolean) });
+  const oneByOne = advanceAccumulator(null, { ...base, loadDays: () => assert.fail('no debe cargar todos'), loadDay });
+  assert.deepEqual(oneByOne.data, together.data);
+  assert.deepEqual(oneByOne.data.px.Ana.ka.slice(0, 1), [7]);
+  assert.equal(oneByOne.data.kav, 1);
+  assert.deepEqual(loaded, ['2026-07-25', '2026-07-26', '2026-07-27', '2026-07-28'], 'de a uno y el que falta se salta');
+});
