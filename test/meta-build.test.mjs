@@ -389,3 +389,20 @@ test('build.mjs meta (runMeta): escribe lo que publica la rama meta, con «Todos
   assert.equal(readPub('status.json').regions.asia.ok, true, 'un 500 de raw es un error de archivo: la región sigue y reintenta');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// Chat 179: la API corta los participantes en 4; el grupo del asesino (`groupSize`) dice cuántos atacaban.
+import { eventFromLines as eventFromLinesP179 } from '../lib/meta.mjs';
+import { peopleOfEvent as peopleP179, isSoloEvent as soloP179 } from '../lib/meta-core.mjs';
+test('chat 179: el grupo del asesino llega al evento y decide el tamaño de pelea', () => {
+  const kill = { eventId: 1, timestamp: '2026-11-08T10:00:00Z', participantsCount: 4, groupSize: 14, killerName: 'K', victimName: 'V' };
+  const ev = eventFromLinesP179(kill, { k: [], v: [] });
+  assert.equal(ev.groupSize, 14);
+  assert.equal(peopleP179(ev), 14);
+  // Un solo participante pero en grupo de 3: no es «solo» (regla del dueño: grupo 1 y un participante).
+  const grupo = eventFromLinesP179({ ...kill, participantsCount: 1, groupSize: 3 }, { k: [], v: [] });
+  assert.equal(soloP179(grupo), false);
+  // Kills de antes del 5-oct (sin groupSize): queda el número de participantes, como antes.
+  const vieja = eventFromLinesP179({ ...kill, participantsCount: 1, groupSize: undefined }, { k: [], v: [] });
+  assert.equal('groupSize' in vieja, false);
+  assert.equal(soloP179(vieja), true);
+});
