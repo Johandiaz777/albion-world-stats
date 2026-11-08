@@ -141,6 +141,10 @@ jobs:
           # Parte 137: Meta Armory desde el escáner (lee solo lo nuevo; ~10-60 s; la primera vez completa desde el 29/09
           # de a 4 días por corrida, con tope de 500 MB por región). Va antes de la diaria para no esperarla.
           if node --max-old-space-size=4096 build.mjs meta; then touch .meta-ok; else echo "::warning::meta falló"; fi
+          # Chat 175: rescate de las kills de Meta perdidas en la primera carga (29-sep, sin equipo en el escáner). Solo si Meta
+          # salió bien (se publica con su estado). ~12 min y ~50 pedidos por minuto a la API por corrida, hasta terminar (~6 días);
+          # después cada corrida lo ve terminado y no pide nada. Si falla, Meta sigue igual.
+          if [ -f .meta-ok ]; then node --max-old-space-size=4096 build.mjs meta-rescue || echo "::warning::rescate de Meta falló"; fi
           # Parte 138: Rankings de kills con el acumulador de las funciones sobre la copia local (~1-2 min; la función
           # `refreshCraftingLeaderboards` los copia a las HH:40 si appConfig/rankingsSource = repos).
           if node --max-old-space-size=8192 build.mjs rankings; then touch .rankings-ok; else echo "::warning::rankings falló"; fi

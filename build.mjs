@@ -70,6 +70,13 @@ if (args[0] === 'rankings') {
   const at = args.includes('--now') ? new Date(args[args.indexOf('--now') + 1]) : new Date();
   process.exit(await runRankings({ root: here, regions: only, now: at }));
 }
+// Chat 175: `node build.mjs meta-rescue` = recupera de la API las kills de Meta que se perdieron en la primera carga
+// (29-sep, antes de que el escáner guardara el equipo). Despacio y con tope por corrida (lib/meta-rescue.mjs).
+if (args[0] === 'meta-rescue') {
+  const { runMetaRescue, RESCUE_REGIONS } = await import('./lib/meta-rescue.mjs');
+  const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : RESCUE_REGIONS;
+  process.exit(await runMetaRescue({ root: here, regions: only }));
+}
 // Chat 175: `node build.mjs loot` = botín y perdido de las filas de Rankings (lib/rank-loot-run.mjs). Al final de la
 // corrida: usa lo que dejaron la horaria, Rankings y la diaria.
 if (args[0] === 'loot') {
