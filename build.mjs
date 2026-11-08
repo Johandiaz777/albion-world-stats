@@ -36,6 +36,7 @@ import {
 import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
+import { closedLootPeriods, lootOfRollup, mondayOf, monthStartOf } from './lib/rank-loot.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REGIONS = ['europe', 'americas', 'asia'];
@@ -68,6 +69,14 @@ if (args[0] === 'rankings') {
   const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : RANKINGS_REGIONS;
   const at = args.includes('--now') ? new Date(args[args.indexOf('--now') + 1]) : new Date();
   process.exit(await runRankings({ root: here, regions: only, now: at }));
+}
+// Chat 175: `node build.mjs loot` = botín y perdido de las filas de Rankings (lib/rank-loot-run.mjs). Al final de la
+// corrida: usa lo que dejaron la horaria, Rankings y la diaria.
+if (args[0] === 'loot') {
+  const { runRankLoot, RANK_LOOT_REGIONS } = await import('./lib/rank-loot-run.mjs');
+  const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : RANK_LOOT_REGIONS;
+  const at = args.includes('--now') ? new Date(args[args.indexOf('--now') + 1]) : new Date();
+  process.exit(await runRankLoot({ root: here, regions: only, now: at }));
 }
 const mode = args[0] === 'daily' ? 'daily' : 'hourly';
 const argValue = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
@@ -284,6 +293,12 @@ async function hourly(region) {
     ry ? { date: today, yDate: yesterday } : { date: today },
   );
   writeJson(path.join(here, 'today', region, 'weapons.json'), { v: 1, region, date: today, builtAt: new Date().toISOString(), d: r.weapons });
+  // Chat 175: botín y perdido de hoy (y de ayer mientras la diaria no lo cierra) para `build.mjs loot`. Interno.
+  writeJson(path.join(here, 'today', region, '_loot-today.json'), {
+    date: today,
+    d: lootOfRollup(r),
+    y: ry ? { date: yesterday, ...lootOfRollup(ry) } : null,
+  });
   const todayBase = path.join(here, 'today', region);
   pruneFights(todayBase, (date) => date === today || (ry && date === yesterday));
   writeFights(todayBase, today, r.fl);
@@ -421,9 +436,20 @@ async function daily(region) {
   };
   const accRebuilt = {};
   const accSize = {};
+  // Chat 175: botín de cada día de la semana y el mes de calendario en curso (para ordenar Rankings por botín). Solo se
+  // guarda la plata (chica); los resúmenes siguen el camino de siempre.
+  const monthRollups = load(range(29));
+  const lootFrom = [mondayOf(yesterday), monthStartOf(yesterday)].sort()[0];
+  const dayLoot = {};
+  for (const r of monthRollups) if (r.date >= lootFrom) dayLoot[r.date] = lootOfRollup(r);
+  for (const d of dateList(lootFrom, yesterday)) {
+    if (dayLoot[d]) continue;
+    const r = readJson(rollupPath(d), null);
+    if (r) dayLoot[d] = lootOfRollup(r);
+  }
   const windows = {
     w: mergeRollups(weekRollups), // 6 cerrados + hoy = 7 días
-    m: mergeRollups(load(range(29))), // 29 cerrados + hoy = 30 días
+    m: mergeRollups(monthRollups), // 29 cerrados + hoy = 30 días
     a: accumulated('a', FIRST_DAY),
   };
   if (seasonStart) windows.s = accumulated('s', seasonStart);
@@ -444,6 +470,12 @@ async function daily(region) {
   // Días que todavía no tienen la plata: los que no se alcanzaron y los que fallaron en esta corrida.
   const lootPending = [...missing.slice(tried), ...retry];
   const lootReady = lootWindows({ w: day(-6), m: day(-29), ...(seasonStart ? { s: seasonStart } : {}), a: FIRST_DAY }, lootPending);
+  // Chat 175: días cerrados de Semana, Mes, Temporada y Todo, para `build.mjs loot`. Interno. Solo los períodos con la
+  // plata completa (`lootReady`): uno con días por rehacer no se publica.
+  writeJson(
+    path.join(here, 'index', region, '_loot.json.gz'),
+    closedLootPeriods({ until: yesterday, dayLoot, windows, seasonStart, firstDay: FIRST_DAY, ready: lootReady }),
+  );
   const out = writeShards(path.join(here, 'index'), region, windows, rivals, { from: seriesDays[0], guilds: seriesGuilds }, bestDayByPlayer(weekRollups), {
     until: yesterday,
     // Desde cuándo cuentan "Todo" y "Temporada": la app rotula hasta dónde llega cada total.

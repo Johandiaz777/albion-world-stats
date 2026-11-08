@@ -145,6 +145,11 @@ jobs:
           # `refreshCraftingLeaderboards` los copia a las HH:40 si appConfig/rankingsSource = repos).
           if node --max-old-space-size=8192 build.mjs rankings; then touch .rankings-ok; else echo "::warning::rankings falló"; fi
           if [ "$MODE" = "daily" ]; then if node --max-old-space-size=12288 build.mjs daily; then touch .daily-ok; else echo "::warning::daily falló"; fi; fi
+          # Chat 175: botín y perdido de las filas de Rankings (today/<región>/loot-<período>.json, ~10 KB comprimido cada
+          # uno). Al final: usa la horaria, Rankings y la diaria. Solo escribe dentro de today/, que publica la horaria; si
+          # falla, la app sigue igual (sin el orden por botín) y nada más se toca.
+          node build.mjs loot || echo "::warning::loot falló"
+
       - name: Publicar
         run: |
           # Parte 136: GitHub rechaza archivos de más de 100 MiB (y avisa desde 50). Aviso temprano a los 80 MB para
