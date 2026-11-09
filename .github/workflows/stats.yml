@@ -145,6 +145,10 @@ jobs:
           # salió bien (se publica con su estado). ~12 min y ~50 pedidos por minuto a la API por corrida, hasta terminar (~6 días);
           # después cada corrida lo ve terminado y no pide nada. Si falla, Meta sigue igual.
           if [ -f .meta-ok ]; then node --max-old-space-size=4096 build.mjs meta-rescue || echo "::warning::rescate de Meta falló"; fi
+          # Chat 180: rehace los días de Meta del 5-oct al 9-nov con la regla de asistencias y grupo (lib/meta-redo.mjs). Un
+          # día solo se escribe si tiene TODAS las kills guardadas; cada día una vez (~1,2 GB por servidor y corrida, ~3-5
+          # corridas). Después cada corrida lo ve hecho y no baja nada. Si falla, Meta sigue igual.
+          if [ -f .meta-ok ]; then node --max-old-space-size=8192 build.mjs meta-redo || echo "::warning::rehacer Meta falló"; fi
           # Parte 138: Rankings de kills con el acumulador de las funciones sobre la copia local (~1-2 min; la función
           # `refreshCraftingLeaderboards` los copia a las HH:40 si appConfig/rankingsSource = repos).
           if node --max-old-space-size=8192 build.mjs rankings; then touch .rankings-ok; else echo "::warning::rankings falló"; fi

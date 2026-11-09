@@ -77,6 +77,13 @@ if (args[0] === 'meta-rescue') {
   const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : RESCUE_REGIONS;
   process.exit(await runMetaRescue({ root: here, regions: only }));
 }
+// Chat 180: `node build.mjs meta-redo [--region r] [--dry]` = rehace los días de Meta del 5-oct al 9-nov con la regla de
+// asistencias y grupo (lib/meta-redo.mjs). Cada día una sola vez; `--dry` solo mide.
+if (args[0] === 'meta-redo') {
+  const { runMetaRedo, REDO_REGIONS } = await import('./lib/meta-redo.mjs');
+  const only = args.includes('--region') ? [args[args.indexOf('--region') + 1]] : REDO_REGIONS;
+  process.exit(await runMetaRedo({ root: here, regions: only, write: !args.includes('--dry') }));
+}
 // Chat 175: `node build.mjs loot` = botín y perdido de las filas de Rankings (lib/rank-loot-run.mjs). Al final de la
 // corrida: usa lo que dejaron la horaria, Rankings y la diaria.
 if (args[0] === 'loot') {
