@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, hasCombatAssist, hasLootAssist, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, COMBAT_ASSIST_VERSION, hasCombatAssist, hasLootAssist, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 import { closedLootPeriods, lootOfRollup, mondayOf, monthStartOf } from './lib/rank-loot.mjs';
@@ -436,7 +436,7 @@ async function daily(region) {
           next.lav = LOOT_ASSIST_VERSION;
         }
         next.gka = full.gka;
-        next.kav = 1;
+        next.kav = COMBAT_ASSIST_VERSION;
         if (!builtDates.includes(d)) builtDates.push(d);
       }
     }
