@@ -458,7 +458,7 @@ async function daily(region) {
   // "Todo" y "Temporada" crecen cada día: acumulado incremental en `index/<región>/_acc/` (rama que
   // se reescribe con un solo commit) en vez de cargar todos los días en memoria (ver advanceAccumulator).
   const loadDays = (dates) => dates.map((d) => readJson(rollupPath(d), null)).filter(Boolean);
-  const accumulated = (key, from) => {
+  const accumulated = (key, from, until = yesterday) => {
     // Parte 136: en partes (`readJsonParts`/`writeJsonParts`, ver lib/store.mjs): el de un solo archivo iba a
     // pasar el tope de texto de V8 y los 100 MiB de GitHub. Si todavía no hay partes, se lee el archivo viejo.
     const file = path.join(here, 'index', region, '_acc', `${key}.json.gz`);
@@ -467,7 +467,7 @@ async function daily(region) {
     const prev = parts === undefined ? readJson(file, null) : parts && { ...parts.head, data: parts.data };
     const { data, acc, rebuilt } = advanceAccumulator(prev, {
       from,
-      until: yesterday,
+      until,
       rollupVersion: ROLLUP_VERSION,
       rebuiltDates: builtDates,
       loadDays,
@@ -519,7 +519,10 @@ async function daily(region) {
   byDate.clear();
   monthRollups = null;
   windows.a = accumulated('a', FIRST_DAY);
-  if (seasonStart) windows.s = accumulated('s', seasonStart);
+  // Chat 182: la temporada de config.json (sin una del panel) termina en `seasonEnd`; pasada esa fecha «Temporada» se queda
+  // con sus días y no suma los de entre temporadas. Con la del panel (solo trae inicio), hasta ayer como siempre.
+  const seasonUntil = seasonStart && seasonStart === fileConfig.seasonStart && typeof fileConfig.seasonEnd === 'string' && fileConfig.seasonEnd < yesterday ? fileConfig.seasonEnd : yesterday;
+  if (seasonStart) windows.s = accumulated('s', seasonStart, seasonUntil);
   const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids) };
   // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
   // el teléfono no baja 30 archivos de peleas de ~6 MB para dibujarla.
