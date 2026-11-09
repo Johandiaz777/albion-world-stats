@@ -54,3 +54,19 @@ test('parte 59: una línea repetida (mismo eventId) se indexa una sola vez, la p
   const refs = shards[shardOf('Ana', 256)].ana;
   assert.deepEqual(refs, [0, Buffer.byteLength(line), 2 * (Buffer.byteLength(line) + 1), Buffer.byteLength(other)]);
 });
+
+test('chat 184: nombres que son propiedades de Object («Constructor», «toString», «__proto__») se indexan sin romper', () => {
+  const text = [
+    line({ eventId: 1, killerName: 'Constructor', victimName: 'toString' }),
+    line({ eventId: 2, killerName: '__proto__', victimName: 'hasOwnProperty' }),
+  ].join('\n');
+  const { shards } = buildNameIndex(text, killNames, 8);
+  const get = (n) => shards[shardOf(n, 8)][n.toLowerCase()];
+  for (const n of ['Constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    assert.ok(Array.isArray(get(n)), n);
+    assert.equal(get(n).length, 2, n);
+  }
+  // Se escriben como JSON normal y vuelven a leerse con su lista.
+  const back = JSON.parse(JSON.stringify(shards[shardOf('Constructor', 8)]));
+  assert.deepEqual(Object.prototype.hasOwnProperty.call(back, 'constructor') ? back.constructor : null, get('Constructor'));
+});
