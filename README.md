@@ -11,7 +11,7 @@ equipo de cada kill, desde el 25/07/2026). Corre en GitHub Actions: **0 Firebase
 | Directorio nombre → id del juego (un id por jugador, todos los vistos) | `index/<region>/ids/<0-1023>.json` |
 | Armas: kills y muertes con cada arma | `index/<region>/weapons.json` |
 | Lo mismo solo de HOY (cada hora) | `today/<region>/...` |
-| Kills por nombre (asesino/víctima): bytes de cada línea en el archivo del día, para que la app pida solo esas líneas por Range (8 días) | `index/<region>/ki/<fecha>/<0-255>.json` (hoy, y ayer hasta que cierra: `today/<region>/ki/...`) |
+| Kills por nombre (asesino/víctima): bytes de cada línea en el archivo del día, para que la app pida solo esas líneas por Range (31 días; 8 hasta el chat 182) | `index/<region>/ki/<fecha>/<0-255>.json` (hoy, y ayer hasta que cierra: `today/<region>/ki/...`) |
 | Peleas por gremio, igual (32 días) | `index/<region>/bi/<fecha>/<0-31>.json` (hoy: `today/<region>/bi/...`) |
 | Salud por región | `index/status.json`, `today/status.json` |
 
