@@ -26,12 +26,15 @@ test('kills: asesino suma kill y fama, víctima muerte, participantes asistencia
 
 test('peleas: victoria/derrota por kills contra muertes y rivales por par', () => {
   const battlesText = JSON.stringify({
+    battleId: 3,
     guilds: [
       { name: 'Lobos', kills: 5, deaths: 1 },
       { name: 'Osos', kills: 1, deaths: 5 },
     ],
   });
-  const r = buildDayRollup({ killsText: '', battlesText, equipmentText: '' });
+  // Hallazgo 69: son rivales porque se mataron en esa pelea.
+  const killsText = JSON.stringify({ eventId: 1, battleId: 3, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 10, participants: [] });
+  const r = buildDayRollup({ killsText, battlesText, equipmentText: '' });
   assert.equal(r.guilds.Lobos[G.WINS], 1);
   assert.equal(r.guilds.Osos[G.LOSSES], 1);
   const rivals = rivalsByGuild(r.rivals);
@@ -415,4 +418,37 @@ test('chat 179: assistPeople es igual a killPeople de ranking-core y separa asis
   const line = JSON.stringify({ eventId: 9, battleId: null, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 100, participantsCount: 3, groupSize: 14, participants: [] });
   const ka = build({ killsText: line, battlesText: '', equipmentText: '' }).px.Ana.ka;
   assert.deepEqual(ka.slice(0, 5), [0, 1, 0, 0, 0]);
+});
+
+// Hallazgo 69 (chat 197): «Rivales frecuentes» mezclaba aliados (Most Hated y Most Loved, SZKODA 0C y SZKODA OC, CCTV y VTCC).
+test('hallazgo 69: dos gremios que no se mataron en la pelea no son rivales (aliados del mismo bando)', () => {
+  const line = (n, kg, vg) => JSON.stringify({ eventId: n, battleId: 9, killerName: `A${n}`, killerGuild: kg, victimName: `V${n}`, victimGuild: vg, totalFame: 10, participants: [] });
+  // Most Hated y Most Loved (aliados) matan a Zorros; nunca entre ellos.
+  const killsText = [line(1, 'Most Hated', 'Zorros'), line(2, 'Most Loved', 'Zorros'), line(3, 'Zorros', 'Most Hated'), line(4, 'Most Loved', 'Zorros')].join('\n');
+  const r = buildDayRollup({ killsText, battlesText: '', equipmentText: '' });
+  assert.equal(r.rivals['Most Hated\u0001Most Loved'], undefined);
+  assert.ok(r.rivals['Most Hated\u0001Zorros']);
+  assert.ok(r.rivals['Most Loved\u0001Zorros']);
+});
+
+test('hallazgo 69: la alianza de las peleas del archivo se guarda (la más reciente) y saca a los aliados de la lista publicada', () => {
+  const battlesText = JSON.stringify({
+    battleId: 4,
+    guilds: [
+      { name: 'Most Hated', kills: 3, deaths: 0, alliance: 'HATE' },
+      { name: 'Most Loved', kills: 2, deaths: 0, alliance: 'HATE' },
+      { name: 'Zorros', kills: 0, deaths: 5, alliance: '' },
+    ],
+  });
+  const r = buildDayRollup({ killsText: '', battlesText, equipmentText: '' });
+  assert.deepEqual(r.al, { 'Most Hated': 'HATE', 'Most Loved': 'HATE' });
+  const later = { al: { 'Most Loved': 'OTRA' } };
+  assert.equal(mergeRollups([r, later]).al['Most Loved'], 'OTRA');
+  // Un día viejo (sin `al`) ya contaba al par de aliados: no se publica.
+  const old = { 'Most Hated\u0001Most Loved': [300, 0, 0], 'Most Hated\u0001Zorros': [4, 4, 0] };
+  const list = rivalsByGuild(old, 10, {}, { 'Most Hated': 'HATE', 'Most Loved': ' hate ' });
+  assert.deepEqual(list['Most Hated'].map((x) => x[0]), ['Zorros']);
+  assert.equal(list['Most Loved'], undefined);
+  // Sin alianza conocida, todo sigue como antes.
+  assert.deepEqual(rivalsByGuild(old)['Most Hated'].map((x) => x[0]), ['Most Loved', 'Zorros']);
 });

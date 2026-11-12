@@ -312,7 +312,7 @@ async function hourly(region) {
     path.join(here, 'today'),
     region,
     ry ? { d: r, y: ry } : { d: r },
-    { rd: rivalsByGuild(r.rivals, 5, r.ids) },
+    { rd: rivalsByGuild(r.rivals, 5, r.ids, r.al) },
     undefined,
     undefined,
     ry ? { date: today, yDate: yesterday } : { date: today },
@@ -523,7 +523,8 @@ async function daily(region) {
   // con sus días y no suma los de entre temporadas. Con la del panel (solo trae inicio), hasta ayer como siempre.
   const seasonUntil = seasonStart && seasonStart === fileConfig.seasonStart && typeof fileConfig.seasonEnd === 'string' && fileConfig.seasonEnd < yesterday ? fileConfig.seasonEnd : yesterday;
   if (seasonStart) windows.s = accumulated('s', seasonStart, seasonUntil);
-  const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids) };
+  // Hallazgo 69: la alianza más reciente de los últimos 30 días (incluye hoy) vale para las dos ventanas.
+  const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids, windows.m.al), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids, windows.m.al) };
   // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
   // el teléfono no baja 30 archivos de peleas de ~6 MB para dibujarla.
   const seriesDays = dateList(day(-29), yesterday);
