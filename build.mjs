@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, COMBAT_ASSIST_VERSION, hasCombatAssist, hasLootAssist, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, fightBackfillDays, COMBAT_ASSIST_VERSION, hasCombatAssist, hasLootAssist, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 import { closedLootPeriods, lootOfRollup, mondayOf, monthStartOf } from './lib/rank-loot.mjs';
@@ -381,6 +381,24 @@ async function daily(region) {
     built += 1;
     builtDates.push(d);
   }
+  // 1a bis) Hallazgo 102 (chat 205): días de la ventana de peleas sin `fights/` (perdidos al rehacer la rama index).
+  // Pocos por corrida (cada uno rehace el día) y dentro del mismo presupuesto; si la descarga falla se reintenta después.
+  const fightsBase = path.join(here, 'index', region);
+  const fightsFilled = [];
+  for (const d of fightBackfillDays({
+    days: dateList(day(-FIGHT_DAYS), yesterday).filter(daySettled),
+    hasFights: (x) => fs.existsSync(path.join(fightsBase, 'fights', x)),
+    hasRollup: (x) => fs.existsSync(rollupPath(x)),
+    built: builtDates,
+  })) {
+    if (Date.now() - buildStart > DAY_BUILD_BUDGET_MS) break;
+    const failedBefore = stats.failed ?? 0;
+    const r = await dayRollup(region, d, stats);
+    if (!r?.fl || (stats.failed ?? 0) > failedBefore) continue;
+    writeFights(fightsBase, d, r.fl);
+    fightsFilled.push(d);
+  }
+  if (fightsFilled.length) console.log(`${region}: plata por pelea rellenada (hallazgo 102): ${fightsFilled.join(', ')}`);
   // 1b) Campos nuevos (parte 58) en resúmenes hechos antes, sin rehacer el día entero:
   //   - pids (ids de jugadores) en los últimos 29 días: solo baja el archivo de kills; las ventanas de
   //     7 y 30 días los traen (Todo/Temporada no hacen falta para abrir un perfil).
