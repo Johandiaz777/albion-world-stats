@@ -9,8 +9,9 @@ const conPeleas = new Set(['2026-11-07', '2026-11-08']);
 const base = { days, hasFights: (d) => conPeleas.has(d), hasRollup: () => true };
 
 test('elige los días sin peleas, del más nuevo al más viejo, con tope por corrida', () => {
-  assert.equal(FIGHT_BACKFILL_PER_RUN, 2);
-  assert.deepEqual(fightBackfillDays(base), ['2026-11-06', '2026-11-05']);
+  assert.equal(FIGHT_BACKFILL_PER_RUN, 8);
+  assert.deepEqual(fightBackfillDays({ ...base, max: 2 }), ['2026-11-06', '2026-11-05']);
+  assert.deepEqual(fightBackfillDays(base), ['2026-11-06', '2026-11-05', '2026-11-04', '2026-10-14']);
   assert.deepEqual(fightBackfillDays({ ...base, max: 10 }), ['2026-11-06', '2026-11-05', '2026-11-04', '2026-10-14']);
 });
 
