@@ -33,7 +33,7 @@ import {
   writeNameIndex,
 } from './lib/name-index.mjs';
 
-import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, fightBackfillDays, COMBAT_ASSIST_VERSION, hasCombatAssist, hasLootAssist, hasRivalZvz, RIVAL_ZVZ_VERSION, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
+import { advanceAccumulator, bestDayByPlayer, buildDayRollup, dayOutcome, DEDUP_FIRST_DAY, FIGHT_DAYS, fightBackfillDays, COMBAT_ASSIST_VERSION, hasCombatAssist, hasLootAssist, hasRivalSizes, RIVAL_SIZE_VERSION, publishCombatAssist, thousands, LOOT_ASSIST_VERSION, LOOT_FIRST_DAY, lootWindows, publishGuildLoot, rollupVersionFor, shardFights, gearFromDay, pidsFromKills, PIECES_VERSION, compactExtras, mergeRollups, P, rivalsByGuild, ROLLUP_VERSION, shardOf, topMembers } from './lib/rollup.mjs';
 import { dateList, dayFileBaseBytes, dayFileSize, dayFileSource, fetchDayFile, FIRST_DAY } from './lib/sources.mjs';
 import { readJson, readJsonParts, writeJson, writeJsonParts } from './lib/store.mjs';
 import { closedLootPeriods, lootOfRollup, mondayOf, monthStartOf } from './lib/rank-loot.mjs';
@@ -246,7 +246,7 @@ function writeShards(dir, region, windows, rivals, series, bestDay, meta = {}) {
   // Chat 177: ventanas cuyos datos por asistencia están COMPLETOS (`k`: conteos; `l`: plata). Así la app distingue
   // «sin kills en ese corte» (no va, es 0) de «todavía no está» (no muestra el filtro) sin adivinar.
   const keys = Object.keys(windows);
-  meta = { ...meta, assist: { k: keys.filter((k) => hasCombatAssist(windows[k])), z: keys.filter((k) => hasRivalZvz(windows[k])), l: keys.filter((k) => hasLoot(k) && hasLootAssist(windows[k])) } };
+  meta = { ...meta, assist: { k: keys.filter((k) => hasCombatAssist(windows[k])), r: keys.filter((k) => hasRivalSizes(windows[k])), l: keys.filter((k) => hasLoot(k) && hasLootAssist(windows[k])) } };
   let bytes = 0;
   const spread = (recs, count) => {
     const shards = Array.from({ length: count }, () => ({}));
@@ -413,7 +413,7 @@ async function daily(region) {
     .filter((d, i, all) => d >= FIRST_DAY && all.indexOf(d) === i)
     .filter((d) => {
       const r = readJson(rollupPath(d), null);
-      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) || !hasLootAssist({ ...r, date: d }) || !hasCombatAssist({ ...r, date: d }) || !hasRivalZvz(r));
+      return r && ((recentDays.has(d) && lacksPids(r)) || (d >= PIECES_FIRST_DAY && (r.pv ?? 0) < PIECES_VERSION) || !hasLootAssist({ ...r, date: d }) || !hasCombatAssist({ ...r, date: d }) || !hasRivalSizes(r));
     })
     .sort()
     .reverse();
@@ -468,14 +468,14 @@ async function daily(region) {
         if (!builtDates.includes(d)) builtDates.push(d);
       }
     }
-    if (!hasRivalZvz(r)) {
-      // p207: peleas ZvZ por rival. Solo kills + peleas (sin equipo; un 404 de peleas deja ese día sin dato, no en 0).
-      // n/wa/wb del día NO se tocan: solo se agregan las 3 posiciones ZvZ a los pares que ya estaban.
+    if (!hasRivalSizes(r)) {
+      // p207: peleas por tramo de tamaño por rival. Solo kills + peleas (sin equipo; un 404 de peleas deja ese día sin dato, no en 0).
+      // n/wa/wb del día NO se tocan: solo se agregan los 12 números de tramos a los pares que ya estaban.
       const battlesText = killsText === null ? null : await fetchDayFile('battles', region, d, stats);
       if (killsText !== null && battlesText !== null) {
         const full = buildDayRollup({ killsText, battlesText, equipmentText: '' });
-        next.rivals = Object.fromEntries(Object.entries(r.rivals ?? {}).map(([key, v]) => [key, [v[0] || 0, v[1] || 0, v[2] || 0, ...(full.rivals[key] ?? [0, 0, 0, 0, 0, 0]).slice(3, 6)]]));
-        next.rzv = RIVAL_ZVZ_VERSION;
+        next.rivals = Object.fromEntries(Object.entries(r.rivals ?? {}).map(([key, v]) => [key, [v[0] || 0, v[1] || 0, v[2] || 0, ...(full.rivals[key] ?? []).slice(3, 15)]]));
+        next.rsz = RIVAL_SIZE_VERSION;
         if (!builtDates.includes(d)) builtDates.push(d);
       }
     }
@@ -556,7 +556,7 @@ async function daily(region) {
   const seasonUntil = seasonStart && seasonStart === fileConfig.seasonStart && typeof fileConfig.seasonEnd === 'string' && fileConfig.seasonEnd < yesterday ? fileConfig.seasonEnd : yesterday;
   if (seasonStart) windows.s = accumulated('s', seasonStart, seasonUntil);
   // Hallazgo 69: la alianza más reciente de los últimos 30 días (incluye hoy) vale para las dos ventanas.
-  const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids, windows.m.al, hasRivalZvz(windows.m)), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids, windows.m.al, hasRivalZvz(windows.a)) };
+  const rivals = { rm: rivalsByGuild(windows.m.rivals, 10, windows.a.ids, windows.m.al, hasRivalSizes(windows.m)), ra: rivalsByGuild(windows.a.rivals, 10, windows.a.ids, windows.m.al, hasRivalSizes(windows.a)) };
   // Serie diaria de los últimos 29 días cerrados por gremio (la gráfica del perfil del gremio): así
   // el teléfono no baja 30 archivos de peleas de ~6 MB para dibujarla.
   const seriesDays = dateList(day(-29), yesterday);

@@ -252,7 +252,7 @@ test('chat 160: las peleas que el archivo no trae salen de las kills', () => {
   const r = buildDayRollup({ killsText, battlesText: '', equipmentText: '' });
   assert.deepEqual(r.guilds.Lobos.slice(4), [1, 1, 0]);
   assert.deepEqual(r.guilds.Zorros.slice(4), [1, 0, 1]);
-  assert.deepEqual(r.rivals['Lobos\u0001Zorros'], [1, 1, 0, 1, 1, 0]);
+  assert.deepEqual(r.rivals['Lobos\u0001Zorros'], [1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0]);
   assert.equal(r.px.A1.m[2], 1, '24 personas en la pelea: ZvZ');
 });
 
@@ -453,28 +453,28 @@ test('hallazgo 69: la alianza de las peleas del archivo se guarda (la más recie
   assert.deepEqual(rivalsByGuild(old)['Most Hated'].map((x) => x[0]), ['Most Loved', 'Zorros']);
 });
 
-test('p207 rivales ZvZ: pelea de 19 no cuenta, de 20 sí; suma de días; tupla compatible', () => {
+test('p207 rivales por tamaño: tramos <10, 10-19, 20-49, 50+ disjuntos; suma de días; tupla compatible', () => {
   const fight = (id, size) => {
     const battlesText = JSON.stringify({ battleId: id, guilds: [{ name: 'Lobos', kills: 5, deaths: 1 }, { name: 'Osos', kills: 1, deaths: 5 }], players: Array.from({ length: size }, () => ({})) });
     const killsText = JSON.stringify({ eventId: id, battleId: id, killerName: 'Ana', killerGuild: 'Lobos', victimName: 'Beto', victimGuild: 'Osos', totalFame: 10, participants: [] });
     return { killsText, battlesText, equipmentText: '' };
   };
-  const r19 = buildDayRollup(fight(1, 19));
-  const r20 = buildDayRollup(fight(2, 20));
-  assert.deepEqual(r19.rivals['Lobos\u0001Osos'], [1, 1, 0, 0, 0, 0]);
-  assert.deepEqual(r20.rivals['Lobos\u0001Osos'], [1, 1, 0, 1, 1, 0]);
-  assert.equal(r20.rzv, 1);
-  const sum = mergeRollups([r19, r20]);
-  assert.deepEqual(sum.rivals['Lobos\u0001Osos'], [2, 2, 0, 1, 1, 0]);
-  assert.equal(sum.rzv, 1);
-  // Un día viejo (3 posiciones, sin rzv) suma sin romper y deja la ventana incompleta.
-  const mixed = mergeRollups([r20, { rivals: { 'Lobos\u0001Osos': [4, 2, 2] } }]);
-  assert.deepEqual(mixed.rivals['Lobos\u0001Osos'], [5, 3, 2, 1, 1, 0]);
-  assert.equal(mixed.rzv, 0);
-  // Publicado: las 5 primeras posiciones intactas; ZvZ al final y espejado para el otro gremio; sin rzv, ausente.
+  const key = 'LobosOsos';
+  const at = (size) => buildDayRollup(fight(size, size)).rivals[key];
+  const tier = (i) => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0].map((_, j) => (j >= i * 3 && j < i * 3 + 3 ? [1, 1, 0][j - i * 3] : 0));
+  for (const [size, i] of [[9, 0], [10, 1], [19, 1], [20, 2], [49, 2], [50, 3]]) assert.deepEqual(at(size), [1, 1, 0, ...tier(i)], `pelea de ${size}`);
+  assert.equal(buildDayRollup(fight(1, 20)).rsz, 1);
+  const sum = mergeRollups([buildDayRollup(fight(1, 19)), buildDayRollup(fight(2, 20)), buildDayRollup(fight(3, 50))]);
+  assert.deepEqual(sum.rivals[key], [3, 3, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0]);
+  assert.equal(sum.rsz, 1);
+  // Un día viejo (3 posiciones, sin rsz) suma sin romper y deja la ventana incompleta.
+  const mixed = mergeRollups([buildDayRollup(fight(1, 20)), { rivals: { [key]: [4, 2, 2] } }]);
+  assert.deepEqual(mixed.rivals[key].slice(0, 3), [5, 3, 2]);
+  assert.equal(mixed.rsz, 0);
+  // Publicado: 5 primeras intactas; 12 al final y espejados para el otro gremio; sin rsz, tupla de 5.
   const full = rivalsByGuild(sum.rivals, 10, {}, {}, true);
-  assert.deepEqual(full.Lobos[0], ['Osos', 2, 2, 0, '', 1, 1, 0]);
-  assert.deepEqual(full.Osos[0], ['Lobos', 2, 0, 2, '', 1, 0, 1]);
-  assert.deepEqual(rivalsByGuild(mixed.rivals)['Lobos'][0], ['Osos', 5, 3, 2, '']);
-  assert.deepEqual(rivalsByGuild({ 'Lobos\u0001Osos': [4, 2, 2] }, 10, {}, {}, true).Lobos[0], ['Osos', 4, 2, 2, '', 0, 0, 0]);
+  assert.deepEqual(full.Lobos[0], ['Osos', 3, 3, 0, '', 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0]);
+  assert.deepEqual(full.Osos[0], ['Lobos', 3, 0, 3, '', 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1]);
+  assert.deepEqual(rivalsByGuild(mixed.rivals).Lobos[0], ['Osos', 5, 3, 2, '']);
+  assert.equal(rivalsByGuild({ [key]: [4, 2, 2] }, 10, {}, {}, true).Lobos[0].length, 17);
 });
