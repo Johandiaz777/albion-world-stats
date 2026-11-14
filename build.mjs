@@ -419,6 +419,9 @@ async function daily(region) {
     .reverse();
   let patched = 0;
   for (const d of patchTodo.slice(0, maxDays)) {
+    // p207: el relleno de ZvZ por rival mete ~112 días a esta lista; comparte el reloj de la diaria (DAY_BUILD_BUDGET_MS)
+    // para que la corrida no pase su tope de 180 min. Lo que falte sigue la noche siguiente.
+    if (Date.now() - buildStart > DAY_BUILD_BUDGET_MS) break;
     const r = readJson(rollupPath(d), null);
     const killsText = await fetchDayFile('kills', region, d, stats);
     const next = { ...r };
